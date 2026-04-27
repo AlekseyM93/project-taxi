@@ -49,7 +49,7 @@ const Hero = ({ onRouteChange }: HeroProps) => {
               transition={{ duration: 0.7, delay: 0.2 }}
               className="text-lg text-muted-foreground leading-relaxed mb-8 max-w-lg"
             >
-              Фиксированные цены, свои водители, доставка цветов. 
+              Фиксированные цены, свои водители, доставка. 
               Комфортные поездки из Ступино по всей Московской области и России.
             </motion.p>
 

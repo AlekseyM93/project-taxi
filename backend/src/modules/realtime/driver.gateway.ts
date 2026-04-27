@@ -13,7 +13,6 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
-import { JwtService } from '@nestjs/jwt';
 import { randomUUID } from 'crypto';
 
 import { PresenceService } from './presence.service';
@@ -23,6 +22,7 @@ import { OrderStatus } from '../orders/order.entity';
 import { PassengerGateway } from './passenger.gateway';
 import { DriversService } from '../drivers/drivers.service';
 import { OrderCommandIdempotencyService } from '../orders/order-command-idempotency.service';
+import { AuthService } from '../auth/auth.service';
 
 function resolveWsOrigins() {
   const raw =
@@ -45,7 +45,7 @@ export class DriverGateway {
   private readonly lastAcceptedLocationSeq = new Map<string, number>();
 
   constructor(
-    private readonly jwt: JwtService,
+    private readonly authService: AuthService,
     private readonly presenceService: PresenceService,
     private readonly ordersService: OrdersService,
     private readonly dispatchService: DispatchService,
@@ -53,6 +53,89 @@ export class DriverGateway {
     private readonly driversService: DriversService,
     private readonly idempotency: OrderCommandIdempotencyService,
   ) {}
+
+  private buildMeta(event: string, traceId: string) {
+    return {
+      contractVersion: this.contractVersion,
+      event,
+      traceId,
+      serverTs: new Date().toISOString(),
+    };
+  }
+
+  private parseLocationUpdateBody(body: {
+    lat: number;
+    lng: number;
+    heading?: number;
+    speed?: number;
+    clientTs?: string;
+    sequence?: number;
+    accuracy?: number;
+    isMock?: boolean;
+    offlineBuffered?: boolean;
+  }) {
+    const lat = Number(body?.lat);
+    const lng = Number(body?.lng);
+    const sequence =
+      typeof body?.sequence === 'number' && Number.isFinite(body.sequence)
+        ? body.sequence
+        : undefined;
+    const clientTs =
+      typeof body?.clientTs === 'string' && body.clientTs.trim().length > 0
+        ? body.clientTs
+        : undefined;
+
+    return {
+      lat,
+      lng,
+      heading: typeof body?.heading === 'number' ? body.heading : undefined,
+      speed: typeof body?.speed === 'number' ? body.speed : undefined,
+      accuracy: typeof body?.accuracy === 'number' ? body.accuracy : undefined,
+      isMock: body?.isMock === true,
+      offlineBuffered: body?.offlineBuffered === true,
+      sequence,
+      clientTs,
+    };
+  }
+
+  private logLocationAckEvent(params: {
+    traceId: string;
+    driverId?: string;
+    ack: Record<string, unknown>;
+  }) {
+    const ackMeta =
+      params.ack && typeof params.ack._meta === 'object'
+        ? (params.ack._meta as Record<string, unknown>)
+        : {};
+    const ok = params.ack.ok === true;
+    const reason =
+      typeof params.ack.reason === 'string' ? params.ack.reason : null;
+
+    void this.ordersService
+      .trackDriverLocationAckMetric({ ok, reason })
+      .catch((metricError: unknown) => {
+        console.log('[driver.location.update][metrics] ERROR', {
+          traceId: params.traceId,
+          message:
+            metricError && typeof metricError === 'object'
+              ? String((metricError as { message?: unknown }).message ?? metricError)
+              : String(metricError),
+        });
+      });
+
+    console.log('[driver.location.update][ack]', {
+      ok,
+      reason,
+      code: params.ack.code ?? null,
+      tracking: params.ack.tracking ?? null,
+      orderId: params.ack.orderId ?? null,
+      driverId: params.driverId ?? null,
+      traceId: params.traceId,
+      contractVersion:
+        ackMeta.contractVersion ?? this.contractVersion ?? 'unknown',
+      serverTs: ackMeta.serverTs ?? new Date().toISOString(),
+    });
+  }
 
   private extractToken(client: Socket): string | null {
     const authToken = client.handshake.auth?.token;
@@ -73,7 +156,20 @@ export class DriverGateway {
       return client.data.driverId;
     }
 
-    const userId = client.data?.userId;
+    let userId = client.data?.userId;
+    if (!userId) {
+      // Some clients can emit events immediately after socket connect.
+      // Fallback to token validation avoids auth race between connection and first event.
+      const token = this.extractToken(client);
+      if (token) {
+        const payload = await this.authService.validateAccessToken(token);
+        if (payload.role === 'DRIVER') {
+          userId = String(payload.sub);
+          client.data.userId = userId;
+        }
+      }
+    }
+
     if (!userId) {
       throw new UnauthorizedException();
     }
@@ -208,24 +304,14 @@ export class DriverGateway {
           return {
             ...ack,
             traceId,
-            _meta: {
-              contractVersion: this.contractVersion,
-              event,
-              traceId,
-              serverTs: new Date().toISOString(),
-            },
+            _meta: this.buildMeta(event, traceId),
           };
         }
 
         return {
           ok: true,
           traceId,
-          _meta: {
-            contractVersion: this.contractVersion,
-            event,
-            traceId,
-            serverTs: new Date().toISOString(),
-          },
+          _meta: this.buildMeta(event, traceId),
         };
       };
 
@@ -254,23 +340,13 @@ export class DriverGateway {
       return {
         ok: true,
         traceId,
-        _meta: {
-          contractVersion: this.contractVersion,
-          event,
-          traceId,
-          serverTs: new Date().toISOString(),
-        },
+        _meta: this.buildMeta(event, traceId),
       };
     } catch (error) {
       const mapped = this.mapErrorToAck(error, traceId);
       return {
         ...mapped,
-        _meta: {
-          contractVersion: this.contractVersion,
-          event,
-          traceId,
-          serverTs: new Date().toISOString(),
-        },
+        _meta: this.buildMeta(event, traceId),
       };
     }
   }
@@ -314,8 +390,11 @@ export class DriverGateway {
         throw new UnauthorizedException();
       }
 
-      const payload = this.jwt.verify(token);
-      const userId = String(payload.sub || payload.userId || payload.id);
+      const payload = await this.authService.validateAccessToken(token);
+      if (payload.role !== 'DRIVER') {
+        throw new UnauthorizedException('Invalid role');
+      }
+      const userId = String(payload.sub);
 
       client.data.userId = userId;
 
@@ -417,76 +496,56 @@ export class DriverGateway {
       offlineBuffered?: boolean;
     },
   ) {
+    const event = 'driver.location.update';
+    const traceId = randomUUID();
     try {
       const driverId = await this.ensureDriverId(client);
+      const parsed = this.parseLocationUpdateBody(body);
 
-      const lat = Number(body?.lat);
-      const lng = Number(body?.lng);
-
-      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-        return {
+      if (!Number.isFinite(parsed.lat) || !Number.isFinite(parsed.lng)) {
+        const ack = {
           ok: false,
           reason: 'INVALID_COORDINATES' as const,
-          _meta: {
-            contractVersion: this.contractVersion,
-            event: 'driver.location.update',
-            serverTs: new Date().toISOString(),
-          },
+          _meta: this.buildMeta(event, traceId),
         };
+        this.logLocationAckEvent({ traceId, driverId, ack });
+        return ack;
       }
 
       const existingLocation =
         await this.presenceService.getDriverLocation(driverId);
       const isLateOrDuplicate = this.isLocationUpdateLateOrDuplicate({
         driverId,
-        sequence:
-          typeof body?.sequence === 'number' && Number.isFinite(body.sequence)
-            ? body.sequence
-            : undefined,
-        clientTs:
-          typeof body?.clientTs === 'string' && body.clientTs.trim().length > 0
-            ? body.clientTs
-            : undefined,
+        sequence: parsed.sequence,
+        clientTs: parsed.clientTs,
         latestStoredLocationTs:
           existingLocation?.clientTs ?? existingLocation?.updatedAt ?? null,
       });
       if (isLateOrDuplicate) {
-        return {
+        const ack = {
           ok: false,
           reason: 'DUPLICATE_OR_LATE_UPDATE' as const,
-          _meta: {
-            contractVersion: this.contractVersion,
-            event: 'driver.location.update',
-            serverTs: new Date().toISOString(),
-          },
+          _meta: this.buildMeta(event, traceId),
         };
+        this.logLocationAckEvent({ traceId, driverId, ack });
+        return ack;
       }
 
       await this.presenceService.updateDriverLocation(driverId, {
-        lat,
-        lng,
-        heading: typeof body?.heading === 'number' ? body.heading : undefined,
-        speed: typeof body?.speed === 'number' ? body.speed : undefined,
-        accuracy:
-          typeof body?.accuracy === 'number' ? body.accuracy : undefined,
-        isMock: body?.isMock === true,
-        offlineBuffered: body?.offlineBuffered === true,
-        sequence:
-          typeof body?.sequence === 'number' && Number.isFinite(body.sequence)
-            ? body.sequence
-            : undefined,
-        clientTs:
-          typeof body?.clientTs === 'string' && body.clientTs.trim().length > 0
-            ? body.clientTs
-            : undefined,
+        lat: parsed.lat,
+        lng: parsed.lng,
+        heading: parsed.heading,
+        speed: parsed.speed,
+        accuracy: parsed.accuracy,
+        isMock: parsed.isMock,
+        offlineBuffered: parsed.offlineBuffered,
+        sequence: parsed.sequence,
+        clientTs: parsed.clientTs,
         source: 'WS',
       });
 
-      if (
-        typeof body?.sequence === 'number' &&
-        Number.isFinite(body.sequence)
-      ) {
-        this.lastAcceptedLocationSeq.set(driverId, body.sequence);
+      if (typeof parsed.sequence === 'number') {
+        this.lastAcceptedLocationSeq.set(driverId, parsed.sequence);
       }
 
       await this.ordersService.reconcileDriverAvailability(driverId);
@@ -506,15 +565,13 @@ export class DriverGateway {
           activeOrder.status,
         )
       ) {
-        return {
+        const ack = {
           ok: true,
           tracking: false,
-          _meta: {
-            contractVersion: this.contractVersion,
-            event: 'driver.location.update',
-            serverTs: new Date().toISOString(),
-          },
+          _meta: this.buildMeta(event, traceId),
         };
+        this.logLocationAckEvent({ traceId, driverId, ack });
+        return ack;
       }
 
       const location = await this.presenceService.getDriverLocation(driverId);
@@ -527,27 +584,30 @@ export class DriverGateway {
         });
       }
 
-      return {
+      const ack = {
         ok: true,
         tracking: true,
         orderId: activeOrder.id,
-        _meta: {
-          contractVersion: this.contractVersion,
-          event: 'driver.location.update',
-          serverTs: new Date().toISOString(),
-        },
+        _meta: this.buildMeta(event, traceId),
       };
+      this.logLocationAckEvent({ traceId, driverId, ack });
+      return ack;
     } catch (e: any) {
-      console.log('updateLocation ERROR:', e?.message ?? e);
-      return {
-        ok: false,
-        reason: 'INTERNAL_ERROR',
-        _meta: {
-          contractVersion: this.contractVersion,
-          event: 'driver.location.update',
-          serverTs: new Date().toISOString(),
-        },
+      console.log('[driver.location.update] ERROR', {
+        traceId,
+        message: e?.message ?? String(e),
+      });
+      const mapped = this.mapErrorToAck(e, traceId);
+      const ack = {
+        ...mapped,
+        _meta: this.buildMeta(event, traceId),
       };
+      this.logLocationAckEvent({
+        traceId,
+        driverId: client.data?.driverId,
+        ack,
+      });
+      return ack;
     }
   }
 

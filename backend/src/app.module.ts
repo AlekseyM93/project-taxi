@@ -15,7 +15,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { PaymentsModule } from './modules/payments/payments.module';
 import { OutboxModule } from './modules/outbox/outbox.module';
 import { AntifraudModule } from './modules/antifraud/antifraud.module';
-import { MarketModule } from './modules/market/market.module';
+import { PricingModule } from './modules/pricing/pricing.module';
 import { SupportModule } from './modules/support/support.module';
 import { GovernanceModule } from './modules/governance/governance.module';
 
@@ -69,7 +69,7 @@ import { GovernanceModule } from './modules/governance/governance.module';
     PaymentsModule,
     OutboxModule,
     AntifraudModule,
-    MarketModule,
+    PricingModule,
     SupportModule,
     GovernanceModule,
   ],

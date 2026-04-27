@@ -76,6 +76,7 @@ export class OrdersController {
     return {
       orderId: created.orderId,
       status: created.status,
+      fare: created.fare,
       dispatch: dispatchResult,
     };
   }
@@ -226,6 +227,38 @@ export class OrdersController {
   async getMyDriverOrderDetails(@Req() req: Request, @Param('id') id: string) {
     const user = req.user as { sub: string };
     return this.orders.getDriverOrderDetails(user.sub, id);
+  }
+
+  @Post('me/driver/:id/accept')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('DRIVER')
+  async acceptMyDriverOrder(@Req() req: Request, @Param('id') id: string) {
+    const user = req.user as { sub: string };
+    return this.dispatch.acceptBroadcastOffer(id, user.sub);
+  }
+
+  @Post('me/driver/:id/start')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('DRIVER')
+  async startMyDriverOrder(@Req() req: Request, @Param('id') id: string) {
+    const user = req.user as { sub: string };
+    return this.orders.startOrder(user.sub, id);
+  }
+
+  @Post('me/driver/:id/finish')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('DRIVER')
+  async finishMyDriverOrder(@Req() req: Request, @Param('id') id: string) {
+    const user = req.user as { sub: string };
+    return this.orders.finishOrder(user.sub, id);
+  }
+
+  @Post('me/driver/:id/cancel')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('DRIVER')
+  async cancelMyDriverOrder(@Req() req: Request, @Param('id') id: string) {
+    const user = req.user as { sub: string };
+    return this.orders.cancelOrder(user.sub, id);
   }
 
   @Get('me/driver/:id/timeline')

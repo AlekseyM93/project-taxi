@@ -14,7 +14,14 @@ type MetricName =
   | 'orders_cancelled'
   | 'orders_no_drivers'
   | 'recoveries_assigned'
-  | 'recoveries_in_progress';
+  | 'recoveries_in_progress'
+  | 'driver_location_ack_ok'
+  | 'driver_location_ack_fail'
+  | 'driver_location_ack_invalid_coordinates'
+  | 'driver_location_ack_duplicate_or_late'
+  | 'driver_location_ack_internal_error'
+  | 'driver_location_ack_driver_profile_not_found'
+  | 'driver_location_ack_unauthorized';
 
 type AdminAuditFeedItem =
   | {
@@ -76,6 +83,13 @@ export class OrderObservabilityService
     'orders_no_drivers',
     'recoveries_assigned',
     'recoveries_in_progress',
+    'driver_location_ack_ok',
+    'driver_location_ack_fail',
+    'driver_location_ack_invalid_coordinates',
+    'driver_location_ack_duplicate_or_late',
+    'driver_location_ack_internal_error',
+    'driver_location_ack_driver_profile_not_found',
+    'driver_location_ack_unauthorized',
   ];
 
   constructor(

@@ -10,7 +10,7 @@ const Footer = () => {
           <div>
             <h3 className="font-display text-2xl font-bold gold-text mb-4">Такси Свои</h3>
             <p className="text-sm text-muted-foreground leading-relaxed">
-              Служба заказов такси и доставки цветов по г. Ступино и Московской области. Фиксированные цены, свои водители.
+              Служба заказов такси и доставки по г. Ступино и Московской области. Фиксированные цены, свои водители.
             </p>
           </div>
 

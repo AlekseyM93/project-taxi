@@ -15,6 +15,14 @@ const ProtectedRoute = ({
 }: ProtectedRouteProps) => {
   const location = useLocation();
   const { user, isAuthenticated } = useAuth();
+  const adminAuthDisabled =
+    import.meta.env.VITE_ADMIN_AUTH_DISABLED === 'true' &&
+    import.meta.env.MODE !== 'production' &&
+    location.pathname.startsWith('/admin');
+
+  if (adminAuthDisabled) {
+    return <>{children}</>;
+  }
 
   if (!isAuthenticated || !user) {
     return <Navigate to={redirectTo} replace state={{ from: location }} />;

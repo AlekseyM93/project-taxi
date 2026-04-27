@@ -29,6 +29,9 @@ export class OrderEntity {
   @Column({ type: 'varchar', length: 32, default: 'DEFAULT' })
   cityCode!: string;
 
+  @Column({ type: 'varchar', length: 16, default: 'ECONOMY' })
+  serviceLevel!: string;
+
   @Column({
     type: 'enum',
     enum: OrderStatus,
@@ -38,6 +41,9 @@ export class OrderEntity {
 
   @Column({ type: 'numeric', precision: 10, scale: 2 })
   price!: string;
+
+  @Column({ type: 'jsonb', nullable: true })
+  pricingBreakdown!: Record<string, unknown> | null;
 
   @Column({
     type: 'geometry',

@@ -1,4 +1,11 @@
-import { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+} from "react";
+import { logoutSession } from "@/services/authApi";
 
 export type UserRole =
   | "passenger"
@@ -15,6 +22,7 @@ export interface AuthUser {
   phone?: string;
   name?: string;
   accessToken?: string | null;
+  refreshToken?: string | null;
 }
 
 interface AuthContextType {
@@ -26,6 +34,7 @@ interface AuthContextType {
     phone?: string;
     name?: string;
     accessToken: string;
+    refreshToken?: string;
   }) => void;
   logout: () => void;
   isAuthenticated: boolean;
@@ -33,6 +42,17 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
+const AUTH_STORAGE_KEY = "taxi_user";
+const AUTH_UPDATED_EVENT = "taxi-auth-updated";
+
+function readStoredUser(): AuthUser | null {
+  try {
+    const saved = localStorage.getItem(AUTH_STORAGE_KEY);
+    return saved ? (JSON.parse(saved) as AuthUser) : null;
+  } catch {
+    return null;
+  }
+}
 
 function normalizeRole(role: UserRole): UserRole {
   if (role === "passenger") return "PASSENGER";
@@ -41,23 +61,42 @@ function normalizeRole(role: UserRole): UserRole {
   return role;
 }
 
-export function roleMatches(currentRole: UserRole, requiredRole: UserRole): boolean {
+export function roleMatches(
+  currentRole: UserRole,
+  requiredRole: UserRole,
+): boolean {
   return normalizeRole(currentRole) === normalizeRole(requiredRole);
 }
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<AuthUser | null>(() => {
-    const saved = localStorage.getItem("taxi_user");
-    return saved ? JSON.parse(saved) : null;
+    return readStoredUser();
   });
 
   useEffect(() => {
     if (user) {
-      localStorage.setItem("taxi_user", JSON.stringify(user));
+      localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(user));
     } else {
-      localStorage.removeItem("taxi_user");
+      localStorage.removeItem(AUTH_STORAGE_KEY);
     }
   }, [user]);
+
+  useEffect(() => {
+    const syncFromStorage = () => setUser(readStoredUser());
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === AUTH_STORAGE_KEY) {
+        syncFromStorage();
+      }
+    };
+
+    window.addEventListener("storage", handleStorage);
+    window.addEventListener(AUTH_UPDATED_EVENT, syncFromStorage);
+    return () => {
+      window.removeEventListener("storage", handleStorage);
+      window.removeEventListener(AUTH_UPDATED_EVENT, syncFromStorage);
+    };
+  }, []);
 
   const login = (u: AuthUser) => setUser(u);
   const setSession = (params: {
@@ -66,6 +105,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     phone?: string;
     name?: string;
     accessToken: string;
+    refreshToken?: string;
   }) => {
     setUser({
       id: params.userId,
@@ -73,9 +113,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       phone: params.phone,
       name: params.name,
       accessToken: params.accessToken,
+      refreshToken: params.refreshToken ?? null,
     });
   };
-  const logout = () => setUser(null);
+  const logout = () => {
+    if (user?.accessToken) {
+      void logoutSession({
+        accessToken: user.accessToken,
+        refreshToken: user.refreshToken ?? null,
+      });
+    }
+    setUser(null);
+  };
 
   return (
     <AuthContext.Provider

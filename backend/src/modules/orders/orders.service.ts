@@ -26,7 +26,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PaymentsService } from '../payments/payments.service';
 import { OutboxService } from '../outbox/outbox.service';
 import { AntifraudService } from '../antifraud/antifraud.service';
-import { MarketService } from '../market/market.service';
+import { GeoService } from '../geo/geo.service';
+import { PricingService } from '../pricing/pricing.service';
 import { AdminPanelFilterEntity } from './admin-panel-filter.entity';
 import { AdminActionExecutionEntity } from './admin-action-execution.entity';
 import { OrderMobileCommandEntity } from './order-mobile-command.entity';
@@ -55,6 +56,7 @@ import {
   ORDER_HISTORY_MAX_LIMIT,
   OrderFilterStatus,
   PassengerFareEstimateDto,
+  PASSENGER_SERVICE_LEVELS,
   PassengerOrderTimelineQueryDto,
   UpsertAdminSavedFilterDto,
 } from './dto';
@@ -66,6 +68,7 @@ type OrderReadModel = {
   passengerId: string;
   driverId: string | null;
   cityCode: string;
+  serviceLevel: string;
   status: string;
   price: string;
   from: { lat: number | null; lng: number | null };
@@ -115,7 +118,8 @@ export class OrdersService {
     private readonly payments: PaymentsService,
     private readonly outbox: OutboxService,
     private readonly antifraud: AntifraudService,
-    private readonly market: MarketService,
+    private readonly pricing: PricingService,
+    private readonly geo: GeoService,
   ) {}
 
   private normalizeStatus(status: OrderStatus): string {
@@ -141,74 +145,76 @@ export class OrdersService {
     return typeof point.lat === 'number' && typeof point.lng === 'number';
   }
 
-  private toRad(value: number): number {
-    return (value * Math.PI) / 180;
-  }
+  async trackDriverLocationAckMetric(params: {
+    ok: boolean;
+    reason?: string | null;
+  }) {
+    if (params.ok) {
+      await this.observability.trackMetric('driver_location_ack_ok');
+      return;
+    }
 
-  private haversineKm(
-    fromLat: number,
-    fromLng: number,
-    toLat: number,
-    toLng: number,
-  ): number {
-    const earthRadiusKm = 6371;
-    const dLat = this.toRad(toLat - fromLat);
-    const dLng = this.toRad(toLng - fromLng);
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(this.toRad(fromLat)) *
-        Math.cos(this.toRad(toLat)) *
-        Math.sin(dLng / 2) *
-        Math.sin(dLng / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return earthRadiusKm * c;
+    await this.observability.trackMetric('driver_location_ack_fail');
+    const reason = String(params.reason ?? '')
+      .trim()
+      .toUpperCase();
+
+    if (reason === 'INVALID_COORDINATES') {
+      await this.observability.trackMetric('driver_location_ack_invalid_coordinates');
+      return;
+    }
+    if (reason === 'DUPLICATE_OR_LATE_UPDATE') {
+      await this.observability.trackMetric('driver_location_ack_duplicate_or_late');
+      return;
+    }
+    if (reason === 'DRIVER_PROFILE_NOT_FOUND') {
+      await this.observability.trackMetric(
+        'driver_location_ack_driver_profile_not_found',
+      );
+      return;
+    }
+    if (reason === 'UNAUTHORIZED') {
+      await this.observability.trackMetric('driver_location_ack_unauthorized');
+      return;
+    }
+
+    await this.observability.trackMetric('driver_location_ack_internal_error');
   }
 
   private async calculatePassengerFareEstimate(dto: PassengerFareEstimateDto) {
-    const distanceKm = this.haversineKm(
-      dto.fromLat,
-      dto.fromLng,
-      dto.toLat,
-      dto.toLng,
-    );
-    const roundedDistanceKm = Number(distanceKm.toFixed(2));
-    const estimatedDurationMin = Math.max(
-      4,
-      Math.round((distanceKm / 28) * 60 + 4),
-    );
+    const routeEstimate = this.geo.estimateRoute({
+      fromLat: dto.fromLat,
+      fromLng: dto.fromLng,
+      toLat: dto.toLat,
+      toLng: dto.toLng,
+    });
+    const roundedDistanceKm = routeEstimate.distanceKm;
+    const estimatedDurationMin = routeEstimate.estimatedDurationMin;
 
-    const pricingPolicy = await this.market.getPricingPolicy(dto.cityCode);
-    const baseFare = pricingPolicy.baseFare;
-    const perKmFare = pricingPolicy.perKmFare;
-    const perMinuteFare = pricingPolicy.perMinuteFare;
     const serviceLevel = dto.serviceLevel ?? 'ECONOMY';
-    const serviceMultiplier =
-      serviceLevel === 'BUSINESS' ? 2.1 : serviceLevel === 'COMFORT' ? 1.35 : 1;
-    const surgeMultiplier = pricingPolicy.surgeMultiplier;
-
-    const subtotal =
-      (baseFare +
-        roundedDistanceKm * perKmFare +
-        estimatedDurationMin * perMinuteFare) *
-      serviceMultiplier;
-    const total = Math.max(99, Number((subtotal * surgeMultiplier).toFixed(2)));
+    const breakdown = await this.pricing.calculatePrice({
+      cityCode: dto.cityCode,
+      serviceLevel,
+      routeKm: roundedDistanceKm,
+      routeMinutes: estimatedDurationMin,
+      waitingSeconds: dto.waitingSeconds,
+      isAirportRoute: dto.isAirportRoute,
+      withChildSeat: dto.withChildSeat,
+      withPet: dto.withPet,
+      extraStopsCount: dto.extraStopsCount,
+      outOfCityKm: dto.outOfCityKm,
+      requestedSurgeMultiplier: dto.requestedSurgeMultiplier,
+    });
 
     return {
       serviceLevel,
       distanceKm: roundedDistanceKm,
       estimatedDurationMin,
-      pricing: {
-        currency: 'RUB',
-        baseFare,
-        distanceFare: Number((roundedDistanceKm * perKmFare).toFixed(2)),
-        timeFare: Number((estimatedDurationMin * perMinuteFare).toFixed(2)),
-        serviceMultiplier,
-        surgeMultiplier,
-        total,
-      },
+      pricing: breakdown,
       expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
       estimateId: `fare_${Date.now().toString(36)}`,
-      cityCode: pricingPolicy.cityCode,
+      cityCode: breakdown.cityId,
+      routeProvider: routeEstimate.provider,
     };
   }
 
@@ -218,6 +224,7 @@ export class OrdersService {
       passengerId: order.passengerId,
       driverId: order.driverId,
       cityCode: order.cityCode,
+      serviceLevel: order.serviceLevel,
       status: this.normalizeStatus(order.status),
       price: order.price,
       from: this.extractLatLng(order.fromLocation),
@@ -479,7 +486,38 @@ export class OrdersService {
         fromLng: Number(payload.fromLng),
         toLat: Number(payload.toLat),
         toLng: Number(payload.toLng),
-        price: Number(payload.price),
+        waitingSeconds:
+          typeof payload.waitingSeconds === 'number'
+            ? payload.waitingSeconds
+            : undefined,
+        isAirportRoute: payload.isAirportRoute === true,
+        withChildSeat: payload.withChildSeat === true,
+        withPet: payload.withPet === true,
+        extraStopsCount:
+          typeof payload.extraStopsCount === 'number'
+            ? payload.extraStopsCount
+            : undefined,
+        outOfCityKm:
+          typeof payload.outOfCityKm === 'number'
+            ? payload.outOfCityKm
+            : undefined,
+        requestedSurgeMultiplier:
+          typeof payload.requestedSurgeMultiplier === 'number'
+            ? payload.requestedSurgeMultiplier
+            : undefined,
+        serviceLevel:
+          typeof payload.serviceLevel === 'string' &&
+          PASSENGER_SERVICE_LEVELS.includes(
+            payload.serviceLevel.trim().toUpperCase() as
+              | 'ECONOMY'
+              | 'COMFORT'
+              | 'BUSINESS',
+          )
+            ? (payload.serviceLevel.trim().toUpperCase() as
+                | 'ECONOMY'
+                | 'COMFORT'
+                | 'BUSINESS')
+            : undefined,
         cityCode:
           typeof payload.cityCode === 'string' &&
           payload.cityCode.trim().length > 0
@@ -490,9 +528,7 @@ export class OrdersService {
         !Number.isFinite(createDto.fromLat) ||
         !Number.isFinite(createDto.fromLng) ||
         !Number.isFinite(createDto.toLat) ||
-        !Number.isFinite(createDto.toLng) ||
-        !Number.isFinite(createDto.price) ||
-        createDto.price <= 0
+        !Number.isFinite(createDto.toLng)
       ) {
         throw new BadRequestException('INVALID_CREATE_ORDER_PAYLOAD');
       }
@@ -785,13 +821,16 @@ export class OrdersService {
   }
 
   async createOrder(passengerId: string, dto: CreateOrderDto) {
+    const estimate = await this.calculatePassengerFareEstimate(dto);
+    const finalPrice = estimate.pricing.totalPriceRub;
+
     const risk = this.antifraud.evaluateCreateOrderRisk({
       passengerId,
       fromLat: dto.fromLat,
       fromLng: dto.fromLng,
       toLat: dto.toLat,
       toLng: dto.toLng,
-      price: dto.price,
+      price: finalPrice,
     });
     if (risk.decision === 'REJECT') {
       throw new BadRequestException(`RISK_REJECTED:${risk.reasons.join(',')}`);
@@ -801,8 +840,10 @@ export class OrdersService {
       passengerId,
       driverId: null,
       status: OrderStatus.NEW,
-      cityCode: dto.cityCode ?? 'DEFAULT',
-      price: dto.price.toFixed(2),
+      cityCode: estimate.cityCode,
+      serviceLevel: estimate.serviceLevel,
+      price: finalPrice.toFixed(2),
+      pricingBreakdown: estimate.pricing,
       fromLocation: {
         type: 'Point',
         coordinates: [dto.fromLng, dto.fromLat],
@@ -860,7 +901,9 @@ export class OrdersService {
       assigned: false,
       status: this.normalizeStatus(saved.status),
       cityCode: saved.cityCode,
+      serviceLevel: saved.serviceLevel,
       price: saved.price,
+      fare: estimate.pricing,
       fromLat: dto.fromLat,
       fromLng: dto.fromLng,
       toLat: dto.toLat,
@@ -894,14 +937,20 @@ export class OrdersService {
     passengerId: string,
     dto: ConfirmPassengerOrderDto,
   ) {
-    const estimate = await this.calculatePassengerFareEstimate(dto);
     const created = await this.createOrder(passengerId, {
       fromLat: dto.fromLat,
       fromLng: dto.fromLng,
       toLat: dto.toLat,
       toLng: dto.toLng,
-      price: estimate.pricing.total,
+      serviceLevel: dto.serviceLevel,
       cityCode: dto.cityCode,
+      waitingSeconds: dto.waitingSeconds,
+      isAirportRoute: dto.isAirportRoute,
+      withChildSeat: dto.withChildSeat,
+      withPet: dto.withPet,
+      extraStopsCount: dto.extraStopsCount,
+      outOfCityKm: dto.outOfCityKm,
+      requestedSurgeMultiplier: dto.requestedSurgeMultiplier,
     });
 
     const dispatchResult = await this.dispatchService.createQueueAndDispatch({
@@ -917,10 +966,32 @@ export class OrdersService {
       orderId: created.orderId,
       status: created.status,
       stage: 'CONFIRMED',
-      fare: estimate.pricing,
+      fare: created.fare,
       route: {
-        distanceKm: estimate.distanceKm,
-        estimatedDurationMin: estimate.estimatedDurationMin,
+        distanceKm:
+          (created.fare as Record<string, unknown>)?.meta &&
+          typeof (created.fare as Record<string, unknown>).meta === 'object'
+            ? Number(
+                (
+                  (created.fare as Record<string, unknown>).meta as Record<
+                    string,
+                    unknown
+                  >
+                ).routeKm ?? 0,
+              )
+            : null,
+        estimatedDurationMin:
+          (created.fare as Record<string, unknown>)?.meta &&
+          typeof (created.fare as Record<string, unknown>).meta === 'object'
+            ? Number(
+                (
+                  (created.fare as Record<string, unknown>).meta as Record<
+                    string,
+                    unknown
+                  >
+                ).routeMinutes ?? 0,
+              )
+            : null,
       },
       dispatch: dispatchResult,
     };
@@ -1860,12 +1931,16 @@ export class OrdersService {
 
     const from = this.extractLatLng(order.fromLocation);
     const to = this.extractLatLng(order.toLocation);
-    const distanceKm =
+    const routeEstimate =
       this.hasValidLatLng(from) && this.hasValidLatLng(to)
-        ? Number(
-            this.haversineKm(from.lat, from.lng, to.lat, to.lng).toFixed(2),
-          )
+        ? this.geo.estimateRoute({
+            fromLat: from.lat,
+            fromLng: from.lng,
+            toLat: to.lat,
+            toLng: to.lng,
+          })
         : null;
+    const distanceKm = routeEstimate?.distanceKm ?? null;
     const durationMin = order.acceptedAt
       ? Math.max(
           1,
@@ -1878,10 +1953,8 @@ export class OrdersService {
         )
       : null;
 
+    const breakdown = (order.pricingBreakdown ?? {}) as Record<string, unknown>;
     const total = Number(order.price);
-    const baseFare = Number((total * 0.35).toFixed(2));
-    const distanceFare = Number((total * 0.45).toFixed(2));
-    const timeFare = Number((total * 0.2).toFixed(2));
     const payment = await this.payments.getOrderPayment(order.id);
     const paymentStatus =
       payment?.status ??
@@ -1893,9 +1966,7 @@ export class OrdersService {
       payment: {
         currency: 'RUB',
         total: Number(total.toFixed(2)),
-        baseFare,
-        distanceFare,
-        timeFare,
+        pricingBreakdown: breakdown,
         paymentStatus,
         paymentId: payment?.id ?? null,
         provider: payment?.provider ?? null,
@@ -1903,6 +1974,7 @@ export class OrdersService {
       trip: {
         distanceKm,
         durationMin,
+        routeProvider: routeEstimate?.provider ?? null,
         acceptedAt: order.acceptedAt ? order.acceptedAt.toISOString() : null,
         finishedAt:
           order.status === OrderStatus.DONE

@@ -94,14 +94,19 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.release_version }}
           TARGET_ENV: ${{ inputs.target_environment }}
-          DEPLOY_COMMAND: ${{ secrets.DEPLOY_COMMAND }}
+          DEPLOY_WEBHOOK_URL: ${{ secrets.DEPLOY_WEBHOOK_URL }}
+          DEPLOY_WEBHOOK_TOKEN: ${{ secrets.DEPLOY_WEBHOOK_TOKEN }}
         run: |
-          if [ -z "$DEPLOY_COMMAND" ]; then
-            echo "DEPLOY_COMMAND secret is not configured"
+          if [ -z "$DEPLOY_WEBHOOK_URL" ]; then
+            echo "DEPLOY_WEBHOOK_URL secret is not configured"
             exit 1
           fi
           echo "Deploying version $RELEASE_VERSION to $TARGET_ENV"
-          eval "$DEPLOY_COMMAND"
+          curl --fail --retry 4 --retry-delay 3 --max-time 30 \
+            -X POST "$DEPLOY_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $DEPLOY_WEBHOOK_TOKEN" \
+            -d "{\"releaseVersion\":\"$RELEASE_VERSION\",\"targetEnvironment\":\"$TARGET_ENV\"}"
 
       - name: Verify health endpoint
         env:
@@ -122,12 +127,17 @@ jobs:
     steps:
       - name: Execute rollback command
         env:
-          ROLLBACK_COMMAND: ${{ secrets.ROLLBACK_COMMAND }}
+          ROLLBACK_WEBHOOK_URL: ${{ secrets.ROLLBACK_WEBHOOK_URL }}
+          ROLLBACK_WEBHOOK_TOKEN: ${{ secrets.ROLLBACK_WEBHOOK_TOKEN }}
           TARGET_ENV: ${{ inputs.target_environment }}
         run: |
-          if [ -z "$ROLLBACK_COMMAND" ]; then
-            echo "ROLLBACK_COMMAND secret is not configured"
+          if [ -z "$ROLLBACK_WEBHOOK_URL" ]; then
+            echo "ROLLBACK_WEBHOOK_URL secret is not configured"
             exit 1
           fi
           echo "Running rollback in $TARGET_ENV"
-          eval "$ROLLBACK_COMMAND"
+          curl --fail --retry 4 --retry-delay 3 --max-time 30 \
+            -X POST "$ROLLBACK_WEBHOOK_URL" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $ROLLBACK_WEBHOOK_TOKEN" \
+            -d "{\"targetEnvironment\":\"$TARGET_ENV\"}"

@@ -16,8 +16,24 @@ export class PaymentWebhookDto {
   @IsOptional()
   @IsString()
   @MaxLength(256)
-  signature?: string;
+  signature!: string;
 
   @IsObject()
   payload!: Record<string, unknown>;
+}
+
+export class PaymentOperationDto {
+  @IsString()
+  @MaxLength(128)
+  idempotencyKey!: string;
+
+  @IsString()
+  @MaxLength(512)
+  reason!: string;
+}
+
+export class PaymentThreeDsConfirmDto extends PaymentOperationDto {
+  @IsString()
+  @MaxLength(256)
+  confirmationToken!: string;
 }

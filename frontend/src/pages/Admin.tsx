@@ -24,204 +24,31 @@ import {
   getDispatchTower,
   getDriverOps,
   getOpsAlerts,
+  getOpsPaymentsSecurity,
+  getOpsPaymentsSecurityPolicyAudit,
+  getOpsPaymentsSecurityPolicies,
+  getOpsPaymentsSecurityRunbook,
   getOpsSlo,
   getOpsSummary,
   getAdminMetrics,
+  getPricingTariffs,
   getSavedFilters,
   getSupportCases,
+  upsertOpsPaymentsSecurityPolicy,
+  upsertPricingTariff,
   type AdminListBody,
-  type AdminRecord,
 } from "@/services/adminApi";
-
-const LIST_KEYS = [
-  "items",
-  "data",
-  "rows",
-  "orders",
-  "drivers",
-  "events",
-  "executions",
-  "filters",
-  "templates",
-  "history",
-] as const;
-
-type QueryLike = {
-  isLoading: boolean;
-  isFetching: boolean;
-  data?: {
-    status: number;
-    body: unknown;
-    meta?: {
-      source?: "live" | "cache";
-      cachedAt?: string;
-      fallbackStatus?: number;
-    };
-  };
-};
-
-const ADMIN_CACHE_PREFIX = "admin_panel_cache_v1:";
-
-type CachedQueryPayload = {
-  status: number;
-  body: AdminListBody;
-  savedAt: string;
-};
-
-function asRecord(value: unknown): AdminRecord | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  return value as AdminRecord;
-}
-
-function extractList(body: unknown): AdminRecord[] {
-  if (Array.isArray(body)) {
-    return body.filter((item): item is AdminRecord => !!asRecord(item));
-  }
-  const record = asRecord(body);
-  if (!record) {
-    return [];
-  }
-  for (const key of LIST_KEYS) {
-    const candidate = record[key];
-    if (Array.isArray(candidate)) {
-      return candidate.filter((item): item is AdminRecord => !!asRecord(item));
-    }
-  }
-  return [];
-}
-
-function readText(row: AdminRecord, key: string, fallback = "-"): string {
-  const value = row[key];
-  if (value === undefined || value === null || value === "") {
-    return fallback;
-  }
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-  return JSON.stringify(value);
-}
-
-function readNumber(row: AdminRecord, key: string): number | null {
-  const value = row[key];
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === "string" && value.trim() !== "") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-  return null;
-}
-
-function getStatusBadgeVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
-  if (status === "DONE" || status === "READY" || status === "SUCCESS") {
-    return "default";
-  }
-  if (status === "CANCELLED" || status === "FAILED" || status === "ERROR") {
-    return "destructive";
-  }
-  if (status === "IN_PROGRESS" || status === "ASSIGNED" || status === "BUSY") {
-    return "secondary";
-  }
-  return "outline";
-}
-
-function readCachedQuery(cacheKey: string): CachedQueryPayload | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  const raw = window.localStorage.getItem(`${ADMIN_CACHE_PREFIX}${cacheKey}`);
-  if (!raw) {
-    return null;
-  }
-  try {
-    return JSON.parse(raw) as CachedQueryPayload;
-  } catch {
-    return null;
-  }
-}
-
-function saveCachedQuery(cacheKey: string, status: number, body: AdminListBody) {
-  if (typeof window === "undefined") {
-    return;
-  }
-  const payload: CachedQueryPayload = {
-    status,
-    body,
-    savedAt: new Date().toISOString(),
-  };
-  window.localStorage.setItem(`${ADMIN_CACHE_PREFIX}${cacheKey}`, JSON.stringify(payload));
-}
-
-async function loadWithAdminCache(
-  cacheKey: string,
-  loader: () => Promise<{ status: number; body: AdminListBody }>,
-) {
-  const live = await loader();
-  if (live.status >= 200 && live.status < 300) {
-    saveCachedQuery(cacheKey, live.status, live.body);
-    return {
-      ...live,
-      meta: { source: "live" as const },
-    };
-  }
-
-  if (live.status === 0 || live.status >= 500) {
-    const cached = readCachedQuery(cacheKey);
-    if (cached) {
-      return {
-        status: cached.status,
-        body: cached.body,
-        meta: {
-          source: "cache" as const,
-          cachedAt: cached.savedAt,
-          fallbackStatus: live.status,
-        },
-      };
-    }
-  }
-  return {
-    ...live,
-    meta: { source: "live" as const },
-  };
-}
-
-function QueryStatus({ query }: { query: QueryLike }) {
-  const statusCode = query.data?.status ?? null;
-  const isError = statusCode !== null && statusCode >= 400;
-  const dataSource = query.data?.meta?.source;
-  return (
-    <div className="flex items-center gap-2 text-xs">
-      <Badge variant={query.isLoading || query.isFetching ? "secondary" : "outline"}>
-        {query.isLoading || query.isFetching ? "Загрузка" : "Ожидание"}
-      </Badge>
-      {dataSource ? (
-        <Badge variant={dataSource === "cache" ? "secondary" : "outline"}>
-          {dataSource === "cache" ? "Кэш (резерв)" : "Сеть"}
-        </Badge>
-      ) : null}
-      {statusCode !== null ? (
-        <Badge variant={isError ? "destructive" : "outline"}>HTTP {statusCode}</Badge>
-      ) : null}
-      {query.data?.meta?.cachedAt ? (
-        <Badge variant="outline">Кэш от {query.data.meta.cachedAt}</Badge>
-      ) : null}
-    </div>
-  );
-}
-
-function JsonDebug({ value }: { value: unknown }) {
-  return (
-    <details className="text-xs">
-      <summary className="cursor-pointer text-muted-foreground">Сырой ответ</summary>
-      <pre className="mt-2 overflow-auto rounded-md bg-secondary p-3">{JSON.stringify(value, null, 2)}</pre>
-    </details>
-  );
-}
+import AdminOpsTab from "@/features/admin/components/AdminOpsTab";
+import { JsonDebug, QueryStatus } from "@/features/admin/components/AdminResponseWidgets";
+import {
+  asRecord,
+  extractList,
+  getStatusBadgeVariant,
+  loadWithAdminCache,
+  mapRecordToRows,
+  readNumber,
+  readText,
+} from "@/features/admin/admin-helpers";
 
 const Admin = () => {
   const { toast } = useToast();
@@ -238,13 +65,49 @@ const Admin = () => {
     orderId: "",
     driverId: "",
     dryRun: "true",
-    reason: "Manual admin operation",
+    reason: "",
   });
-  const [filterPayload, setFilterPayload] = useState('{"statuses":["SEARCHING"]}');
+  const [filterPayload, setFilterPayload] = useState("");
   const [createdFilterResult, setCreatedFilterResult] = useState<unknown>(null);
+  const [pricingCityId, setPricingCityId] = useState("MOSCOW");
+  const [pricingForm, setPricingForm] = useState({
+    cityTier: "CITY_TIER_A",
+    serviceLevel: "ECONOMY",
+    fareBaseRub: "159",
+    farePerKmRub: "14",
+    farePerMinuteRub: "12",
+    minFareRub: "179",
+    includedKm: "1",
+    includedMinutes: "3",
+    freeWaitingSeconds: "180",
+    waitingPerMinuteRub: "12",
+    cancelFeeRub: "79",
+    noShowFeeRub: "129",
+    outOfCityPerKmRub: "20",
+    airportSurchargeRub: "150",
+    childSeatRub: "150",
+    petRub: "100",
+    extraStopRub: "100",
+    maxSurgeMultiplier: "2",
+    commissionPercent: "14",
+    minimumPlatformFeeRub: "45",
+  });
+  const [paymentPolicyForm, setPaymentPolicyForm] = useState({
+    ruleCode: "",
+    reasonCode: "",
+    severity: "WARN",
+    comparator: "GTE",
+    threshold: "",
+    message: "",
+    suggestedActions: "",
+    isEnabled: "true",
+  });
+  const adminAuthDisabled = import.meta.env.VITE_ADMIN_AUTH_DISABLED === "true";
 
   const hasAdminAccess =
-    !!user && (roleMatches(user.role, "ADMIN") || roleMatches(user.role, "DISPATCHER"));
+    adminAuthDisabled ||
+    (!!user && (roleMatches(user.role, "ADMIN") || roleMatches(user.role, "DISPATCHER")));
+  const canUseAdminApi = hasAdminAccess && (adminAuthDisabled || !!accessToken);
 
   useEffect(() => {
     if (!hasAdminAccess) {
@@ -283,7 +146,7 @@ const Admin = () => {
       loadWithAdminCache(`orders:${ordersQueryString}`, () =>
         getAdminPanelOrders(accessToken || "", ordersQueryString),
       ),
-    enabled: !!accessToken && hasAdminAccess,
+    enabled: canUseAdminApi,
   });
 
   const driverOpsQuery = useQuery({
@@ -292,7 +155,7 @@ const Admin = () => {
       loadWithAdminCache(`drivers:${driverOpsQueryString}`, () =>
         getDriverOps(accessToken || "", driverOpsQueryString),
       ),
-    enabled: !!accessToken && hasAdminAccess,
+    enabled: canUseAdminApi,
   });
 
   const dispatchQuery = useQuery({
@@ -301,7 +164,7 @@ const Admin = () => {
       loadWithAdminCache(`dispatch:${dispatchQueryString}`, () =>
         getDispatchTower(accessToken || "", dispatchQueryString),
       ),
-    enabled: !!accessToken && hasAdminAccess,
+    enabled: canUseAdminApi,
   });
 
   const opsSummaryQuery = useQuery({
@@ -310,7 +173,7 @@ const Admin = () => {
       loadWithAdminCache("ops-summary:windowMinutes=60", () =>
         getOpsSummary(accessToken || "", "windowMinutes=60"),
       ),
-    enabled: !!accessToken && hasAdminAccess,
+    enabled: canUseAdminApi,
   });
 
   const opsSloQuery = useQuery({
@@ -319,7 +182,7 @@ const Admin = () => {
       loadWithAdminCache("ops-slo:windowMinutes=60", () =>
         getOpsSlo(accessToken || "", "windowMinutes=60"),
       ),
-    enabled: !!accessToken && hasAdminAccess,
+    enabled: canUseAdminApi,
   });
 
   const opsAlertsQuery = useQuery({
@@ -328,7 +191,40 @@ const Admin = () => {
       loadWithAdminCache("ops-alerts:windowMinutes=60", () =>
         getOpsAlerts(accessToken || "", "windowMinutes=60"),
       ),
-    enabled: !!accessToken && hasAdminAccess,
+    enabled: canUseAdminApi,
+  });
+
+  const opsPaymentsSecurityQuery = useQuery({
+    queryKey: ["ops-payments-security"],
+    queryFn: () =>
+      loadWithAdminCache("ops-payments-security:windowMinutes=60", () =>
+        getOpsPaymentsSecurity(accessToken || "", "windowMinutes=60"),
+      ),
+    enabled: canUseAdminApi,
+  });
+  const opsPaymentsSecurityRunbookQuery = useQuery({
+    queryKey: ["ops-payments-security-runbook"],
+    queryFn: () =>
+      loadWithAdminCache("ops-payments-security-runbook:windowMinutes=60", () =>
+        getOpsPaymentsSecurityRunbook(accessToken || "", "windowMinutes=60"),
+      ),
+    enabled: canUseAdminApi,
+  });
+  const opsPaymentsSecurityPoliciesQuery = useQuery({
+    queryKey: ["ops-payments-security-policies"],
+    queryFn: () =>
+      loadWithAdminCache("ops-payments-security-policies", () =>
+        getOpsPaymentsSecurityPolicies(accessToken || ""),
+      ),
+    enabled: canUseAdminApi,
+  });
+  const opsPaymentsSecurityPolicyAuditQuery = useQuery({
+    queryKey: ["ops-payments-security-policy-audit"],
+    queryFn: () =>
+      loadWithAdminCache("ops-payments-security-policy-audit:limit=50", () =>
+        getOpsPaymentsSecurityPolicyAudit(accessToken || "", "limit=50"),
+      ),
+    enabled: canUseAdminApi,
   });
 
   const auditQuery = useQuery({
@@ -337,7 +233,7 @@ const Admin = () => {
       loadWithAdminCache("audit:limit=20&kind=ALL", () =>
         getAuditFeed(accessToken || "", "limit=20&kind=ALL"),
       ),
-    enabled: !!accessToken && hasAdminAccess,
+    enabled: canUseAdminApi,
   });
 
   const supportCasesQuery = useQuery({
@@ -346,7 +242,16 @@ const Admin = () => {
       loadWithAdminCache("support-cases:limit=30", () =>
         getSupportCases(accessToken || "", "limit=30"),
       ),
-    enabled: !!accessToken && hasAdminAccess,
+    enabled: canUseAdminApi,
+  });
+
+  const pricingQuery = useQuery({
+    queryKey: ["admin-pricing-tariffs", pricingCityId],
+    queryFn: () =>
+      loadWithAdminCache(`pricing:${pricingCityId}`, () =>
+        getPricingTariffs(accessToken || "", `cityId=${encodeURIComponent(pricingCityId)}`),
+      ),
+    enabled: canUseAdminApi,
   });
 
   const adminMetricsQuery = useQuery({
@@ -355,7 +260,7 @@ const Admin = () => {
       loadWithAdminCache("admin-metrics:windowMinutes=60", () =>
         getAdminMetrics(accessToken || "", "windowMinutes=60"),
       ),
-    enabled: !!accessToken && hasAdminAccess,
+    enabled: canUseAdminApi,
   });
 
   const actionsHistoryQuery = useQuery({
@@ -364,14 +269,14 @@ const Admin = () => {
       loadWithAdminCache("actions-history:limit=20", () =>
         getActionsHistory(accessToken || "", "limit=20"),
       ),
-    enabled: !!accessToken && hasAdminAccess,
+    enabled: canUseAdminApi,
   });
 
   const actionTemplatesQuery = useQuery({
     queryKey: ["admin-action-templates"],
     queryFn: () =>
       loadWithAdminCache("action-templates", () => getActionTemplates(accessToken || "")),
-    enabled: !!accessToken && hasAdminAccess,
+    enabled: canUseAdminApi,
   });
 
   const actionExecutionsQuery = useQuery({
@@ -380,7 +285,7 @@ const Admin = () => {
       loadWithAdminCache("action-executions:limit=20", () =>
         getActionExecutions(accessToken || "", "limit=20"),
       ),
-    enabled: !!accessToken && hasAdminAccess,
+    enabled: canUseAdminApi,
   });
 
   const savedFiltersQuery = useQuery({
@@ -389,7 +294,7 @@ const Admin = () => {
       loadWithAdminCache("saved-filters:scope=ORDERS", () =>
         getSavedFilters(accessToken || "", "scope=ORDERS"),
       ),
-    enabled: !!accessToken && hasAdminAccess,
+    enabled: canUseAdminApi,
   });
 
   const executeActionMutation = useMutation({
@@ -410,6 +315,28 @@ const Admin = () => {
     },
   });
 
+  const upsertPricingMutation = useMutation({
+    mutationFn: (payload: Record<string, unknown>) => upsertPricingTariff(accessToken || "", payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["admin-pricing-tariffs"] });
+      toast({
+        title: "Тариф сохранен",
+      });
+    },
+  });
+  const upsertPaymentPolicyMutation = useMutation({
+    mutationFn: (payload: Record<string, unknown>) =>
+      upsertOpsPaymentsSecurityPolicy(accessToken || "", payload),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["ops-payments-security-policies"] });
+      queryClient.invalidateQueries({ queryKey: ["ops-payments-security-runbook"] });
+      queryClient.invalidateQueries({ queryKey: ["ops-payments-security-policy-audit"] });
+      toast({
+        title: "Политика webhook security сохранена",
+      });
+    },
+  });
+
   const orders = useMemo(
     () => extractList(ordersQuery.data?.body as AdminListBody | undefined),
     [ordersQuery.data],
@@ -425,6 +352,31 @@ const Admin = () => {
   const opsAlerts = useMemo(
     () => extractList(opsAlertsQuery.data?.body as AdminListBody | undefined),
     [opsAlertsQuery.data],
+  );
+  const opsPaymentsSecurityLatest = useMemo(
+    () => extractList((opsPaymentsSecurityQuery.data?.body as AdminListBody | undefined)?.latest),
+    [opsPaymentsSecurityQuery.data],
+  );
+  const opsPaymentsSecurityReasons = useMemo(
+    () =>
+      mapRecordToRows(
+        asRecord(opsPaymentsSecurityQuery.data?.body as unknown)?.byReason,
+        "reasonCode",
+        "count",
+      ),
+    [opsPaymentsSecurityQuery.data],
+  );
+  const opsPaymentsSecurityRunbookItems = useMemo(
+    () => extractList((opsPaymentsSecurityRunbookQuery.data?.body as AdminListBody | undefined)?.items),
+    [opsPaymentsSecurityRunbookQuery.data],
+  );
+  const opsPaymentsSecurityPolicies = useMemo(
+    () => extractList((opsPaymentsSecurityPoliciesQuery.data?.body as AdminListBody | undefined)?.items),
+    [opsPaymentsSecurityPoliciesQuery.data],
+  );
+  const opsPaymentsSecurityPolicyAuditRows = useMemo(
+    () => extractList((opsPaymentsSecurityPolicyAuditQuery.data?.body as AdminListBody | undefined)?.items),
+    [opsPaymentsSecurityPolicyAuditQuery.data],
   );
   const actionTemplates = useMemo(
     () => extractList(actionTemplatesQuery.data?.body as AdminListBody | undefined),
@@ -449,6 +401,10 @@ const Admin = () => {
   const supportCases = useMemo(
     () => extractList(supportCasesQuery.data?.body as AdminListBody | undefined),
     [supportCasesQuery.data],
+  );
+  const pricingRows = useMemo(
+    () => extractList(pricingQuery.data?.body as AdminListBody | undefined),
+    [pricingQuery.data],
   );
 
   const handleLogout = () => {
@@ -482,6 +438,57 @@ const Admin = () => {
       scope: "ORDERS",
       isPinned: false,
       payload: parsedPayload,
+    });
+  };
+
+  const handleUpsertTariff = () => {
+    upsertPricingMutation.mutate({
+      cityId: pricingCityId.trim().toUpperCase(),
+      cityTier: pricingForm.cityTier,
+      serviceLevel: pricingForm.serviceLevel,
+      fareBaseRub: Number(pricingForm.fareBaseRub),
+      farePerKmRub: Number(pricingForm.farePerKmRub),
+      farePerMinuteRub: Number(pricingForm.farePerMinuteRub),
+      minFareRub: Number(pricingForm.minFareRub),
+      includedKm: Number(pricingForm.includedKm),
+      includedMinutes: Number(pricingForm.includedMinutes),
+      freeWaitingSeconds: Number(pricingForm.freeWaitingSeconds),
+      waitingPerMinuteRub: Number(pricingForm.waitingPerMinuteRub),
+      cancelFeeRub: Number(pricingForm.cancelFeeRub),
+      noShowFeeRub: Number(pricingForm.noShowFeeRub),
+      outOfCityPerKmRub: Number(pricingForm.outOfCityPerKmRub),
+      airportSurchargeRub: Number(pricingForm.airportSurchargeRub),
+      childSeatRub: Number(pricingForm.childSeatRub),
+      petRub: Number(pricingForm.petRub),
+      extraStopRub: Number(pricingForm.extraStopRub),
+      maxSurgeMultiplier: Number(pricingForm.maxSurgeMultiplier),
+      commissionPercent: Number(pricingForm.commissionPercent),
+      minimumPlatformFeeRub: Number(pricingForm.minimumPlatformFeeRub),
+    });
+  };
+
+  const handleUpsertPaymentPolicy = () => {
+    const threshold = Number(paymentPolicyForm.threshold);
+    if (!Number.isFinite(threshold) || threshold < 0) {
+      toast({
+        title: "Некорректный threshold",
+        variant: "destructive",
+      });
+      return;
+    }
+    const suggestedActions = paymentPolicyForm.suggestedActions
+      .split("|")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+    upsertPaymentPolicyMutation.mutate({
+      ruleCode: paymentPolicyForm.ruleCode.trim().toUpperCase(),
+      reasonCode: paymentPolicyForm.reasonCode.trim().toUpperCase(),
+      severity: paymentPolicyForm.severity,
+      comparator: paymentPolicyForm.comparator,
+      threshold,
+      message: paymentPolicyForm.message.trim(),
+      suggestedActions,
+      isEnabled: paymentPolicyForm.isEnabled === "true",
     });
   };
 
@@ -522,6 +529,9 @@ const Admin = () => {
               </TabsTrigger>
               <TabsTrigger value="finance">
                 <ListOrdered className="mr-1 h-4 w-4" /> Финансы
+              </TabsTrigger>
+              <TabsTrigger value="pricing">
+                <Zap className="mr-1 h-4 w-4" /> Тарифы
               </TabsTrigger>
               <TabsTrigger value="action-center">
                 <ShieldAlert className="mr-1 h-4 w-4" /> Центр действий
@@ -645,7 +655,7 @@ const Admin = () => {
                     <Input
                       value={dispatchRiskOnly}
                       onChange={(e) => setDispatchRiskOnly(e.target.value)}
-                      placeholder="riskOnly true/false"
+                      placeholder="Только рискованные (true/false)"
                     />
                     <Button onClick={() => dispatchQuery.refetch()} variant="outline">
                       <RefreshCw className="mr-1 h-4 w-4" /> Обновить
@@ -692,87 +702,30 @@ const Admin = () => {
               </Card>
             </TabsContent>
 
-            <TabsContent value="ops" className="space-y-4">
-              <Card className="border-border bg-card">
-                <CardHeader>
-                  <CardTitle className="text-lg">Control Tower: SLO и алерты</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex flex-wrap gap-2">
-                    <Button onClick={() => opsSummaryQuery.refetch()} variant="outline">
-                      Обновить сводку
-                    </Button>
-                    <Button onClick={() => opsSloQuery.refetch()} variant="outline">
-                      Обновить SLO
-                    </Button>
-                    <Button onClick={() => opsAlertsQuery.refetch()} variant="outline">
-                      Обновить алерты
-                    </Button>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-                    <Card className="border-border bg-background">
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-sm">Сводка OPS</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-2">
-                        <QueryStatus query={opsSummaryQuery} />
-                        <JsonDebug value={opsSummaryQuery.data?.body} />
-                      </CardContent>
-                    </Card>
-                    <Card className="border-border bg-background">
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-sm">SLO Snapshot</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-2">
-                        <QueryStatus query={opsSloQuery} />
-                        <JsonDebug value={opsSloQuery.data?.body} />
-                      </CardContent>
-                    </Card>
-                    <Card className="border-border bg-background">
-                      <CardHeader className="pb-2">
-                        <CardTitle className="text-sm">Алерты ({opsAlerts.length})</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-2">
-                        <QueryStatus query={opsAlertsQuery} />
-                        {opsAlerts.length === 0 ? (
-                          <p className="text-sm text-muted-foreground">Активных алертов нет.</p>
-                        ) : (
-                          <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead>Ключ</TableHead>
-                                <TableHead>Серьезность</TableHead>
-                                <TableHead>Сообщение</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {opsAlerts.map((row, index) => (
-                                <TableRow key={`${readText(row, "key", "alert")}-${index}`}>
-                                  <TableCell>{readText(row, "key")}</TableCell>
-                                  <TableCell>
-                                    <Badge variant={getStatusBadgeVariant(readText(row, "severity"))}>
-                                      {readText(row, "severity")}
-                                    </Badge>
-                                  </TableCell>
-                                  <TableCell>{readText(row, "message")}</TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        )}
-                        <JsonDebug value={opsAlertsQuery.data?.body} />
-                      </CardContent>
-                    </Card>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
+            <AdminOpsTab
+              opsSummaryQuery={opsSummaryQuery}
+              opsSloQuery={opsSloQuery}
+              opsAlertsQuery={opsAlertsQuery}
+              opsPaymentsSecurityQuery={opsPaymentsSecurityQuery}
+              opsPaymentsSecurityRunbookQuery={opsPaymentsSecurityRunbookQuery}
+              opsPaymentsSecurityPoliciesQuery={opsPaymentsSecurityPoliciesQuery}
+              opsPaymentsSecurityPolicyAuditQuery={opsPaymentsSecurityPolicyAuditQuery}
+              opsAlerts={opsAlerts}
+              opsPaymentsSecurityReasons={opsPaymentsSecurityReasons}
+              opsPaymentsSecurityLatest={opsPaymentsSecurityLatest}
+              opsPaymentsSecurityRunbookItems={opsPaymentsSecurityRunbookItems}
+              opsPaymentsSecurityPolicies={opsPaymentsSecurityPolicies}
+              opsPaymentsSecurityPolicyAuditRows={opsPaymentsSecurityPolicyAuditRows}
+              paymentPolicyForm={paymentPolicyForm}
+              setPaymentPolicyForm={setPaymentPolicyForm}
+              handleUpsertPaymentPolicy={handleUpsertPaymentPolicy}
+              isUpsertPaymentPolicyPending={upsertPaymentPolicyMutation.isPending}
+            />
 
             <TabsContent value="support" className="space-y-4">
               <Card className="border-border bg-card">
                 <CardHeader>
-                  <CardTitle className="text-lg">Support Cases</CardTitle>
+                  <CardTitle className="text-lg">Обращения поддержки</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex gap-2">
@@ -819,7 +772,7 @@ const Admin = () => {
             <TabsContent value="finance" className="space-y-4">
               <Card className="border-border bg-card">
                 <CardHeader>
-                  <CardTitle className="text-lg">Финансовая и risk-сводка</CardTitle>
+                  <CardTitle className="text-lg">Финансовая и риск-сводка</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex gap-2">
@@ -833,7 +786,7 @@ const Admin = () => {
                   <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
                     <Card className="border-border bg-background">
                       <CardHeader className="pb-2">
-                        <CardTitle className="text-sm">Order Metrics</CardTitle>
+                        <CardTitle className="text-sm">Метрики заказов</CardTitle>
                       </CardHeader>
                       <CardContent className="space-y-2">
                         <QueryStatus query={adminMetricsQuery} />
@@ -842,7 +795,7 @@ const Admin = () => {
                     </Card>
                     <Card className="border-border bg-background">
                       <CardHeader className="pb-2">
-                        <CardTitle className="text-sm">Risk Driver Ops</CardTitle>
+                        <CardTitle className="text-sm">Риск-профиль водителей</CardTitle>
                       </CardHeader>
                       <CardContent className="space-y-2">
                         <QueryStatus query={driverOpsQuery} />
@@ -850,6 +803,93 @@ const Admin = () => {
                       </CardContent>
                     </Card>
                   </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="pricing" className="space-y-4">
+              <Card className="border-border bg-card">
+                <CardHeader>
+                  <CardTitle className="text-lg">Управление тарифами</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+                    <Input
+                      value={pricingCityId}
+                      onChange={(e) => setPricingCityId(e.target.value.toUpperCase())}
+                      placeholder="CITY_ID"
+                    />
+                    <Input
+                      value={pricingForm.cityTier}
+                      onChange={(e) => setPricingForm({ ...pricingForm, cityTier: e.target.value.toUpperCase() })}
+                      placeholder="CITY_TIER_A..E"
+                    />
+                    <Input
+                      value={pricingForm.serviceLevel}
+                      onChange={(e) =>
+                        setPricingForm({ ...pricingForm, serviceLevel: e.target.value.toUpperCase() })
+                      }
+                      placeholder="ECONOMY/COMFORT/BUSINESS"
+                    />
+                    <Button onClick={() => pricingQuery.refetch()} variant="outline">
+                      <RefreshCw className="mr-1 h-4 w-4" /> Обновить
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                    <Input value={pricingForm.fareBaseRub} onChange={(e) => setPricingForm({ ...pricingForm, fareBaseRub: e.target.value })} placeholder="fareBaseRub" />
+                    <Input value={pricingForm.farePerKmRub} onChange={(e) => setPricingForm({ ...pricingForm, farePerKmRub: e.target.value })} placeholder="farePerKmRub" />
+                    <Input value={pricingForm.farePerMinuteRub} onChange={(e) => setPricingForm({ ...pricingForm, farePerMinuteRub: e.target.value })} placeholder="farePerMinuteRub" />
+                    <Input value={pricingForm.minFareRub} onChange={(e) => setPricingForm({ ...pricingForm, minFareRub: e.target.value })} placeholder="minFareRub" />
+                    <Input value={pricingForm.includedKm} onChange={(e) => setPricingForm({ ...pricingForm, includedKm: e.target.value })} placeholder="includedKm" />
+                    <Input value={pricingForm.includedMinutes} onChange={(e) => setPricingForm({ ...pricingForm, includedMinutes: e.target.value })} placeholder="includedMinutes" />
+                    <Input value={pricingForm.freeWaitingSeconds} onChange={(e) => setPricingForm({ ...pricingForm, freeWaitingSeconds: e.target.value })} placeholder="freeWaitingSeconds" />
+                    <Input value={pricingForm.waitingPerMinuteRub} onChange={(e) => setPricingForm({ ...pricingForm, waitingPerMinuteRub: e.target.value })} placeholder="waitingPerMinuteRub" />
+                    <Input value={pricingForm.cancelFeeRub} onChange={(e) => setPricingForm({ ...pricingForm, cancelFeeRub: e.target.value })} placeholder="cancelFeeRub" />
+                    <Input value={pricingForm.noShowFeeRub} onChange={(e) => setPricingForm({ ...pricingForm, noShowFeeRub: e.target.value })} placeholder="noShowFeeRub" />
+                    <Input value={pricingForm.outOfCityPerKmRub} onChange={(e) => setPricingForm({ ...pricingForm, outOfCityPerKmRub: e.target.value })} placeholder="outOfCityPerKmRub" />
+                    <Input value={pricingForm.airportSurchargeRub} onChange={(e) => setPricingForm({ ...pricingForm, airportSurchargeRub: e.target.value })} placeholder="airportSurchargeRub" />
+                    <Input value={pricingForm.childSeatRub} onChange={(e) => setPricingForm({ ...pricingForm, childSeatRub: e.target.value })} placeholder="childSeatRub" />
+                    <Input value={pricingForm.petRub} onChange={(e) => setPricingForm({ ...pricingForm, petRub: e.target.value })} placeholder="petRub" />
+                    <Input value={pricingForm.extraStopRub} onChange={(e) => setPricingForm({ ...pricingForm, extraStopRub: e.target.value })} placeholder="extraStopRub" />
+                    <Input value={pricingForm.maxSurgeMultiplier} onChange={(e) => setPricingForm({ ...pricingForm, maxSurgeMultiplier: e.target.value })} placeholder="maxSurgeMultiplier" />
+                    <Input value={pricingForm.commissionPercent} onChange={(e) => setPricingForm({ ...pricingForm, commissionPercent: e.target.value })} placeholder="commissionPercent" />
+                    <Input value={pricingForm.minimumPlatformFeeRub} onChange={(e) => setPricingForm({ ...pricingForm, minimumPlatformFeeRub: e.target.value })} placeholder="minimumPlatformFeeRub" />
+                  </div>
+                  <Button
+                    onClick={handleUpsertTariff}
+                    disabled={upsertPricingMutation.isPending}
+                    className="gold-gradient border-0 text-primary-foreground"
+                  >
+                    Сохранить тариф
+                  </Button>
+                  <QueryStatus query={pricingQuery} />
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>City</TableHead>
+                        <TableHead>Tier</TableHead>
+                        <TableHead>Level</TableHead>
+                        <TableHead>Base</TableHead>
+                        <TableHead>PerKm</TableHead>
+                        <TableHead>PerMin</TableHead>
+                        <TableHead>Min</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {pricingRows.map((row, index) => (
+                        <TableRow key={`${readText(row, "id", "tariff")}-${index}`}>
+                          <TableCell>{readText(row, "cityId")}</TableCell>
+                          <TableCell>{readText(row, "cityTier")}</TableCell>
+                          <TableCell>{readText(row, "serviceLevel")}</TableCell>
+                          <TableCell>{readText(row, "fareBaseRub")}</TableCell>
+                          <TableCell>{readText(row, "farePerKmRub")}</TableCell>
+                          <TableCell>{readText(row, "farePerMinuteRub")}</TableCell>
+                          <TableCell>{readText(row, "minFareRub")}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                  <JsonDebug value={pricingQuery.data?.body} />
                 </CardContent>
               </Card>
             </TabsContent>
@@ -866,7 +906,7 @@ const Admin = () => {
                       onChange={(e) =>
                         setActionPayload({ ...actionPayload, actionType: e.target.value.toUpperCase() })
                       }
-                      placeholder="FORCE_CANCEL_ORDER"
+                      placeholder="Тип действия"
                     />
                     <Input
                       value={actionPayload.orderId}
@@ -881,7 +921,7 @@ const Admin = () => {
                     <Input
                       value={actionPayload.dryRun}
                       onChange={(e) => setActionPayload({ ...actionPayload, dryRun: e.target.value })}
-                      placeholder="dryRun true/false"
+                      placeholder="Пробный режим (true/false)"
                     />
                     <Input
                       value={actionPayload.reason}
@@ -950,7 +990,7 @@ const Admin = () => {
                     <Input
                       value={filterPayload}
                       onChange={(e) => setFilterPayload(e.target.value)}
-                      placeholder='{"statuses":["SEARCHING"]}'
+                      placeholder='Пример: {"statuses":["SEARCHING"]}'
                     />
                     <Button onClick={handleCreateFilter} className="gold-gradient border-0 text-primary-foreground">
                       Создать фильтр

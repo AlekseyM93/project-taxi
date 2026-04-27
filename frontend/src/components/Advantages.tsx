@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Users, BadgeRussianRuble, MapPinned, Flower2 } from "lucide-react";
+import { Users, BadgeRussianRuble, MapPinned, Package } from "lucide-react";
 
 const advantages = [
   {
@@ -18,9 +18,9 @@ const advantages = [
     description: "Доставка из Ступино в любую точку Московской области и дальше. 250+ направлений.",
   },
   {
-    icon: Flower2,
-    title: "Доставка цветов",
-    description: "Бережная доставка букетов и цветочных композиций по специальным тарифам.",
+    icon: Package,
+    title: "Доставка",
+    description: "Бережная доставка документов, посылок и личных вещей по прозрачным тарифам.",
   },
 ];
 

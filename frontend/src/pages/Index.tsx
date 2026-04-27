@@ -2,7 +2,7 @@ import { useState } from "react";
 import Header from "@/components/Header";
 import Hero from "@/components/Hero";
 import Advantages from "@/components/Advantages";
-import FlowerDelivery from "@/components/FlowerDelivery";
+import Delivery from "@/components/Delivery";
 import MapPlaceholder from "@/components/MapPlaceholder";
 import Footer from "@/components/Footer";
 
@@ -20,7 +20,7 @@ const Index = () => {
       <Header />
       <Hero onRouteChange={handleRouteChange} />
       <Advantages />
-      <FlowerDelivery />
+      <Delivery />
       <MapPlaceholder routeFrom={routeFrom} routeTo={routeTo} />
       <Footer />
     </div>

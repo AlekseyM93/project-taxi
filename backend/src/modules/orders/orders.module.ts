@@ -15,7 +15,8 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { PaymentsModule } from '../payments/payments.module';
 import { OutboxModule } from '../outbox/outbox.module';
 import { AntifraudModule } from '../antifraud/antifraud.module';
-import { MarketModule } from '../market/market.module';
+import { PricingModule } from '../pricing/pricing.module';
+import { GeoModule } from '../geo/geo.module';
 import { OrderRecoveryService } from './order-recovery.service';
 import { OrderCommandIdempotencyService } from './order-command-idempotency.service';
 import { OrderObservabilityService } from './order-observability.service';
@@ -37,7 +38,8 @@ import { OrderObservabilityService } from './order-observability.service';
     PaymentsModule,
     OutboxModule,
     AntifraudModule,
-    MarketModule,
+    PricingModule,
+    GeoModule,
   ],
   providers: [
     OrdersService,

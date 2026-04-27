@@ -1,4 +1,10 @@
-import { IsIn, IsNotEmpty, IsString, MinLength } from 'class-validator';
+import {
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
 
 export class RegisterDto {
   @IsString()
@@ -22,4 +28,44 @@ export class LoginDto {
   @IsString()
   @IsNotEmpty()
   password!: string;
+
+  @IsOptional()
+  @IsString()
+  mfaCode?: string;
+
+  @IsOptional()
+  @IsString()
+  mfaRecoveryCode?: string;
+}
+
+export class RefreshTokenDto {
+  @IsString()
+  @IsNotEmpty()
+  refreshToken!: string;
+}
+
+export class LogoutDto {
+  @IsOptional()
+  @IsString()
+  refreshToken?: string;
+}
+
+export class MfaEnrollConfirmDto {
+  @IsString()
+  @IsNotEmpty()
+  code!: string;
+}
+
+export class MfaRecoveryLoginDto {
+  @IsString()
+  @IsNotEmpty()
+  phone!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  password!: string;
+
+  @IsString()
+  @IsNotEmpty()
+  recoveryCode!: string;
 }

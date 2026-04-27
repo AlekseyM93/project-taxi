@@ -2,6 +2,7 @@ import 'reflect-metadata';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
+import { json } from 'express';
 import { AppModule } from './app.module';
 import { ApiExceptionFilter } from './common/api-exception.filter';
 import { requestIdMiddleware } from './common/request-id.middleware';
@@ -20,6 +21,7 @@ function resolveAllowedOrigins() {
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
+    bodyParser: false,
     cors: {
       origin: resolveAllowedOrigins(),
       methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -27,6 +29,13 @@ async function bootstrap() {
     },
   });
   const config = app.get(ConfigService);
+  app.use(
+    json({
+      verify: (req, _res, buffer) => {
+        (req as { rawBody?: string }).rawBody = buffer.toString('utf8');
+      },
+    }),
+  );
 
   app.useGlobalPipes(
     new ValidationPipe({

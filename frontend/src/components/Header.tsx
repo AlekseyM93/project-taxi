@@ -28,7 +28,7 @@ const Header = () => {
 
   const links = [
     { to: "/", label: "Главная" },
-    { to: "/#delivery", label: "Доставка цветов" },
+    { to: "/#delivery", label: "Доставка" },
     { to: cabinetLink(), label: cabinetLabel() },
     { to: "/#contacts", label: "Контакты" },
   ];

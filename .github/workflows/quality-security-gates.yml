@@ -35,6 +35,18 @@ jobs:
       - name: Unit tests
         run: npm run test -- --runInBand
 
+      - name: E2E tests
+        run: npm run test:e2e
+
+      - name: Security authz regression
+        run: npm run test:security-authz
+
+      - name: Pricing V2 unit regression
+        run: npm run test:pricing
+
+      - name: Payments production regression
+        run: npm run test:payments
+
   frontend-quality:
     name: Frontend Quality
     runs-on: ubuntu-latest
@@ -92,3 +104,14 @@ jobs:
         run: |
           npm ci
           npm audit --omit=dev --audit-level=high
+
+      - name: Trivy repository scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,misconfig,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: '1'

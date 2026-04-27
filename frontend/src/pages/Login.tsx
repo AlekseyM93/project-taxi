@@ -9,7 +9,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { roleMatches, useAuth, UserRole } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Car, KeyRound, Phone, User } from "lucide-react";
-import { loginByPhonePassword, registerByPhonePassword } from "@/services/authApi";
+import {
+  loginByPhonePassword,
+  registerByPhonePassword,
+} from "@/services/authApi";
 
 function parseJwt(token: string) {
   try {
@@ -36,9 +39,14 @@ const Login = () => {
     if (!isAuthenticated || !user) {
       return;
     }
-    if (roleMatches(user.role, "PASSENGER")) navigate("/passenger", { replace: true });
-    else if (roleMatches(user.role, "DRIVER")) navigate("/driver", { replace: true });
-    else if (roleMatches(user.role, "ADMIN") || roleMatches(user.role, "DISPATCHER")) {
+    if (roleMatches(user.role, "PASSENGER"))
+      navigate("/passenger", { replace: true });
+    else if (roleMatches(user.role, "DRIVER"))
+      navigate("/driver", { replace: true });
+    else if (
+      roleMatches(user.role, "ADMIN") ||
+      roleMatches(user.role, "DISPATCHER")
+    ) {
       navigate("/admin", { replace: true });
     }
   }, [isAuthenticated, navigate, user]);
@@ -104,6 +112,8 @@ const Login = () => {
     }
 
     const token = (loginResponse.body as { accessToken?: string })?.accessToken;
+    const refreshToken = (loginResponse.body as { refreshToken?: string })
+      ?.refreshToken;
     if (!token) {
       toast({
         title: "Ошибка входа",
@@ -129,6 +139,7 @@ const Login = () => {
       phone: phone.trim(),
       name: jwtRole === "DRIVER" ? "Водитель" : "Пассажир",
       accessToken: token,
+      refreshToken,
     });
     toast({ title: "Вход выполнен", description: `Роль: ${jwtRole}` });
     navigate(jwtRole === "DRIVER" ? "/driver" : "/passenger");
@@ -214,7 +225,9 @@ const Login = () => {
               <Button
                 variant="ghost"
                 className="w-full text-muted-foreground"
-                onClick={() => setMode(mode === "register" ? "login" : "register")}
+                onClick={() =>
+                  setMode(mode === "register" ? "login" : "register")
+                }
               >
                 {mode === "register"
                   ? "Уже есть аккаунт? Войти"

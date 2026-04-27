@@ -9,10 +9,10 @@ import {
 } from '@nestjs/websockets';
 import { Inject, UnauthorizedException, forwardRef } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
-import { JwtService } from '@nestjs/jwt';
 import { OrdersService } from '../orders/orders.service';
 import { PresenceService } from './presence.service';
 import { OrderEntity, OrderStatus } from '../orders/order.entity';
+import { AuthService } from '../auth/auth.service';
 
 function resolveWsOrigins() {
   const raw =
@@ -39,7 +39,7 @@ export class PassengerGateway
   private readonly eventSequence = new Map<string, number>();
 
   constructor(
-    private readonly jwt: JwtService,
+    private readonly authService: AuthService,
     @Inject(forwardRef(() => OrdersService))
     private readonly ordersService: OrdersService,
     private readonly presenceService: PresenceService,
@@ -116,8 +116,8 @@ export class PassengerGateway
         return;
       }
 
-      const payload = this.jwt.verify(token);
-      const passengerId = String(payload.sub || payload.userId || payload.id);
+      const payload = await this.authService.validateAccessToken(token);
+      const passengerId = String(payload.sub);
       const role = payload.role;
 
       if (role !== 'PASSENGER') {

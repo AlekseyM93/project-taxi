@@ -1,9 +1,19 @@
-import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
-import { Response } from 'express';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Query,
+  Req,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
+import { Request, Response } from 'express';
 import { OpsService } from './ops.service';
 import { JwtAuthGuard } from '../../common/auth/jwt.guard';
 import { RolesGuard } from '../../common/auth/roles.guard';
 import { Roles } from '../../common/auth/roles.decorator';
+import { UpsertPaymentWebhookSecurityPolicyDto } from './dto';
 
 @Controller('ops')
 export class OpsController {
@@ -60,5 +70,71 @@ export class OpsController {
       ? Number.parseInt(windowMinutesRaw, 10)
       : 60;
     return this.ops.getDashboardSummary(windowMinutes);
+  }
+
+  @Get('dashboard/realtime-ack')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'DISPATCHER')
+  async getRealtimeAck(@Query('windowMinutes') windowMinutesRaw?: string) {
+    const windowMinutes = windowMinutesRaw
+      ? Number.parseInt(windowMinutesRaw, 10)
+      : 60;
+    return this.ops.getRealtimeAckSnapshot(windowMinutes);
+  }
+
+  @Get('dashboard/payments-security')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'DISPATCHER')
+  async getPaymentsSecurity(@Query('windowMinutes') windowMinutesRaw?: string) {
+    const windowMinutes = windowMinutesRaw
+      ? Number.parseInt(windowMinutesRaw, 10)
+      : 60;
+    return this.ops.getPaymentWebhookSecuritySnapshot(windowMinutes);
+  }
+
+  @Get('dashboard/payments-security/runbook')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'DISPATCHER')
+  async getPaymentsSecurityRunbook(
+    @Query('windowMinutes') windowMinutesRaw?: string,
+  ) {
+    const windowMinutes = windowMinutesRaw
+      ? Number.parseInt(windowMinutesRaw, 10)
+      : 60;
+    return this.ops.getPaymentWebhookSecurityRunbook(windowMinutes);
+  }
+
+  @Get('dashboard/payments-security/policies')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'DISPATCHER')
+  async getPaymentsSecurityPolicies() {
+    const items = await this.ops.listPaymentWebhookSecurityPolicies();
+    return { items };
+  }
+
+  @Post('dashboard/payments-security/policies')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'DISPATCHER')
+  async upsertPaymentsSecurityPolicy(
+    @Req() req: Request,
+    @Body() dto: UpsertPaymentWebhookSecurityPolicyDto,
+  ) {
+    const user = req.user as { sub?: string } | undefined;
+    const item = await this.ops.upsertPaymentWebhookSecurityPolicy(
+      dto,
+      user?.sub ?? null,
+    );
+    return { item };
+  }
+
+  @Get('dashboard/payments-security/policies/audit')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles('ADMIN', 'DISPATCHER')
+  async getPaymentsSecurityPolicyAudit(@Query('limit') limitRaw?: string) {
+    const parsed = Number.parseInt(limitRaw ?? '50', 10);
+    const items = await this.ops.listPaymentWebhookSecurityPolicyAudit(
+      Number.isNaN(parsed) ? 50 : parsed,
+    );
+    return { items };
   }
 }

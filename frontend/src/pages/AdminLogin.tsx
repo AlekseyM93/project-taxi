@@ -15,8 +15,12 @@ const AdminLogin = () => {
   const { isAuthenticated, setSession, user } = useAuth();
   const navigate = useNavigate();
   const { toast } = useToast();
+  const adminAuthDisabled =
+    import.meta.env.VITE_ADMIN_AUTH_DISABLED === "true" &&
+    import.meta.env.MODE !== "production";
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
   const [loading, setLoading] = useState(false);
 
   const parseJwt = (token: string) => {
@@ -28,6 +32,10 @@ const AdminLogin = () => {
       return null;
     }
   };
+
+  if (adminAuthDisabled) {
+    navigate("/admin", { replace: true });
+  }
 
   if (
     isAuthenticated &&
@@ -42,6 +50,7 @@ const AdminLogin = () => {
     const response = await loginByPhonePassword({
       phone: phone.trim(),
       password,
+      mfaCode: mfaCode.trim() || undefined,
     });
     setLoading(false);
 
@@ -57,6 +66,8 @@ const AdminLogin = () => {
     }
 
     const token = (response.body as { accessToken?: string })?.accessToken;
+    const refreshToken = (response.body as { refreshToken?: string })
+      ?.refreshToken;
     if (!token) {
       toast({
         title: "Ошибка входа",
@@ -83,6 +94,7 @@ const AdminLogin = () => {
       phone: phone.trim(),
       name: role === "DISPATCHER" ? "Диспетчер" : "Администратор",
       accessToken: token,
+      refreshToken,
     });
     toast({ title: "Вход выполнен", description: `Роль: ${role}` });
     navigate("/admin");
@@ -127,6 +139,20 @@ const AdminLogin = () => {
                   onKeyDown={(e) => e.key === "Enter" && handleLogin()}
                 />
               </div>
+            </div>
+            <div>
+              <Label className="text-sm text-muted-foreground">
+                MFA код (Authenticator)
+              </Label>
+              <Input
+                placeholder="123456"
+                value={mfaCode}
+                onChange={(e) =>
+                  setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 8))
+                }
+                className="bg-secondary/50 border-border mt-1"
+                onKeyDown={(e) => e.key === "Enter" && handleLogin()}
+              />
             </div>
             <Button
               onClick={handleLogin}

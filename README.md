@@ -144,7 +144,7 @@ npm run build
 
 - backend: `build + lint + unit tests`;
 - frontend: `lint + tests + build`;
-- security: `gitleaks` (secret scan) + `npm audit --omit=dev --audit-level=high`.
+- security: `gitleaks` (secret scan) + `npm audit --omit=dev --audit-level=high` + `trivy` (vuln/misconfig/secret scan).
 
 Также добавлен `dependabot` для weekly обновления зависимостей:
 
@@ -180,6 +180,24 @@ npm run build
 - Секреты (`DB_PASSWORD`, `JWT_SECRET`, API-ключи) хранятся только в локальных/защищенных env-файлах и не коммитятся в репозиторий.
 - Для backend использовать только шаблон `backend/.env.example`, рабочие значения держать в `backend/.env`.
 - Для frontend использовать `frontend/.env.example` и локальный `frontend/.env`.
+- Для привилегированных ролей (`ADMIN`, `DISPATCHER`) включен обязательный TOTP MFA на `/auth/login`:
+  - `AUTH_PRIVILEGED_MFA_REQUIRED=true`
+  - `AUTH_PRIVILEGED_MFA_WINDOW_STEPS=1` (допустимое окно по времени)
+  - enrollment/confirm/recovery реализованы через `/auth/mfa/enroll/*` и `/auth/mfa/recovery/*`
+  - `AUTH_MFA_ENCRYPTION_KEY` используется для шифрования MFA secret в БД
+  - `AUTH_MFA_ISSUER` задает issuer в otpauth URI для Authenticator приложений
+- Для security-аудита auth-событий:
+  - `AUTH_AUDIT_RETENTION` (например `30d`)
+  - `AUTH_AUDIT_MAX_ITEMS` (максимум записей в Redis-list)
+  - доступ к последним событиям: `GET /auth/audit/recent` (только `ADMIN`/`DISPATCHER`)
+- Для сессионной безопасности используется access+refresh схема:
+  - `JWT_EXPIRES_IN` для access token,
+  - `JWT_REFRESH_EXPIRES_IN` для refresh token,
+  - refresh-сессии и ревокация access token хранятся в Redis.
+- Для платежных webhook обязательно задавать `PAYMENT_WEBHOOK_SECRET` (длинный случайный секрет, минимум 32 байта).
+- Для платежного провайдера используется `PAYMENT_PROVIDER` (`MOCK_PSP`/другой адаптер), доступны admin endpoints:
+  - `POST /payments/orders/:orderId/refund`
+  - `GET /payments/reconcile/snapshot`
 - Логи не должны содержать чувствительные значения (`DATABASE_URL`, токены, пароли, приватные ключи).
 - Минимальная длина `JWT_SECRET`: 32+ байта случайных данных.
 - Для production окружения:
@@ -201,3 +219,58 @@ npm run build
 1. Еженедельный backup PostgreSQL.
 2. Ежемесячный restore drill на тестовом окружении.
 3. Обязательный postmortem на каждый SEV-1/SEV-2 инцидент.
+
+## 13) Клиентская презентация через GitHub (без локального ПК)
+
+Основной канал демо: `GitHub Actions -> stage`.
+Резервный канал демо: `GitHub Codespaces`.
+
+### 13.1 Что подготовить в GitHub перед релизом stage
+
+1. Создать `Environment` с именем `stage` в репозитории.
+2. Заполнить secrets для workflow:
+   - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+   - `DB_SSL`, `DB_SSL_REJECT_UNAUTHORIZED`
+   - `DEPLOY_WEBHOOK_URL`, `DEPLOY_WEBHOOK_TOKEN`
+   - `HEALTHCHECK_URL`
+   - `ROLLBACK_WEBHOOK_URL`, `ROLLBACK_WEBHOOK_TOKEN`
+3. Проверить, что endpoint `HEALTHCHECK_URL/ops/health/ready` возвращает `200`.
+
+Workflow релиза:
+- `.github/workflows/release-stage-prod.yml`
+
+### 13.2 Как запустить релиз stage из GitHub UI
+
+1. Открыть `Actions -> Release Stage And Prod`.
+2. Нажать `Run workflow`.
+3. Выбрать:
+   - `target_environment = stage`
+   - `release_version = demo-YYYY-MM-DD` (например, `demo-2026-04-27`)
+4. Дождаться успешного завершения этапов:
+   - `Validate And Build`
+   - `Migration Gate`
+   - `Deploy`
+5. Проверить stage:
+   - `GET /ops/health/live`
+   - `GET /ops/health/ready`
+   - вход в web-приложение по публичному stage URL.
+
+### 13.3 Минимальный demo-hardening перед показом
+
+1. Создать demo-админа:
+   - `cd backend`
+   - `node scripts/create-admin.js`
+2. Прогнать минимальные проверки:
+   - backend: `npm run test:preflight-runtime && npm run test:smoke`
+   - frontend: `npm run build`
+3. Проверить сценарий показа end-to-end:
+   - заказ пассажира -> назначение водителя -> обновление статуса -> проверка в админке.
+
+### 13.4 Показ через Codespaces (fallback)
+
+Если stage недоступен, использовать сценарий в `.devcontainer`:
+1. `Code -> Codespaces -> Create codespace on main`.
+2. В Codespaces выполнить команды из `scripts/codespaces-demo.sh`.
+3. Открыть forwarded ports:
+   - `5173` (frontend)
+   - `3000` (backend)

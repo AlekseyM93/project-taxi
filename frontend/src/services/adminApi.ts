@@ -117,6 +117,45 @@ export function getOpsAlerts(token: string, params?: string) {
   );
 }
 
+export function getOpsPaymentsSecurity(token: string, params?: string) {
+  return apiRequest<AdminListBody>(
+    `/ops/dashboard/payments-security${params ? `?${params}` : ''}`,
+    { token },
+  );
+}
+
+export function getOpsPaymentsSecurityRunbook(token: string, params?: string) {
+  return apiRequest<AdminListBody>(
+    `/ops/dashboard/payments-security/runbook${params ? `?${params}` : ''}`,
+    { token },
+  );
+}
+
+export function getOpsPaymentsSecurityPolicies(token: string) {
+  return apiRequest<AdminListBody>('/ops/dashboard/payments-security/policies', {
+    token,
+  });
+}
+
+export function getOpsPaymentsSecurityPolicyAudit(token: string, params?: string) {
+  return apiRequest<AdminListBody>(
+    `/ops/dashboard/payments-security/policies/audit${params ? `?${params}` : ''}`,
+    { token },
+  );
+}
+
+export function upsertOpsPaymentsSecurityPolicy(
+  token: string,
+  body: Record<string, unknown>,
+) {
+  return apiRequest<AdminRecord>('/ops/dashboard/payments-security/policies', {
+    method: 'POST',
+    token,
+    body,
+    retries: 0,
+  });
+}
+
 export function getAdminMetrics(token: string, params?: string) {
   return apiRequest<AdminListBody>(
     `/orders/admin/metrics${params ? `?${params}` : ''}`,
@@ -129,5 +168,23 @@ export function getSupportCases(token: string, params?: string) {
     `/support/cases${params ? `?${params}` : ''}`,
     { token },
   );
+}
+
+export function getPricingTariffs(token: string, params?: string) {
+  return apiRequest<AdminListBody>(`/pricing/tariffs${params ? `?${params}` : ''}`, {
+    token,
+  });
+}
+
+export function upsertPricingTariff(
+  token: string,
+  body: Record<string, unknown>,
+) {
+  return apiRequest<AdminRecord>('/pricing/tariffs', {
+    method: 'POST',
+    token,
+    body,
+    retries: 0,
+  });
 }
 

@@ -9,8 +9,11 @@ import {
 
 export const PAYMENT_STATUSES = [
   'INITIATED',
+  'REQUIRES_ACTION',
   'AUTHORIZED',
   'CAPTURED',
+  'SETTLED',
+  'REFUNDED',
   'VOIDED',
   'FAILED',
 ] as const;
@@ -47,7 +50,13 @@ export class PaymentEntity {
   authorizedAt!: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
+  requiresActionAt!: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
   capturedAt!: Date | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  settledAt!: Date | null;
 
   @Column({ type: 'timestamp', nullable: true })
   voidedAt!: Date | null;

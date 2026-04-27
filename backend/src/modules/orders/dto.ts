@@ -9,7 +9,6 @@ import {
   IsNumber,
   IsObject,
   IsOptional,
-  IsPositive,
   IsString,
   IsUUID,
   Max,
@@ -20,6 +19,12 @@ import {
 
 export const ORDER_HISTORY_DEFAULT_LIMIT = 20;
 export const ORDER_HISTORY_MAX_LIMIT = 100;
+export const PASSENGER_SERVICE_LEVELS = [
+  'ECONOMY',
+  'COMFORT',
+  'BUSINESS',
+] as const;
+export type PassengerServiceLevel = (typeof PASSENGER_SERVICE_LEVELS)[number];
 
 export const ORDER_FILTER_STATUSES = [
   'SEARCHING',
@@ -79,9 +84,48 @@ export class CreateOrderDto {
   @IsNumber() toLat!: number;
   @IsNumber() toLng!: number;
 
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined || value === null || value === ''
+      ? undefined
+      : String(value).trim().toUpperCase(),
+  )
+  @IsIn(PASSENGER_SERVICE_LEVELS)
+  serviceLevel?: PassengerServiceLevel;
+
+  @IsOptional()
   @IsNumber()
-  @IsPositive()
-  price!: number;
+  @Min(0)
+  waitingSeconds?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isAirportRoute?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  withChildSeat?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  withPet?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(20)
+  extraStopsCount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  outOfCityKm?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(5)
+  requestedSurgeMultiplier?: number;
 
   @IsOptional()
   @IsString()
@@ -469,13 +513,6 @@ export class MobileSyncPushDto {
   operations!: MobileSyncPushOperationDto[];
 }
 
-export const PASSENGER_SERVICE_LEVELS = [
-  'ECONOMY',
-  'COMFORT',
-  'BUSINESS',
-] as const;
-export type PassengerServiceLevel = (typeof PASSENGER_SERVICE_LEVELS)[number];
-
 export class PassengerFareEstimateDto {
   @IsNumber()
   fromLat!: number;
@@ -507,6 +544,40 @@ export class PassengerFareEstimateDto {
       : String(value).trim().toUpperCase(),
   )
   cityCode?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  waitingSeconds?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isAirportRoute?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  withChildSeat?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  withPet?: boolean;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(20)
+  extraStopsCount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  outOfCityKm?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(5)
+  requestedSurgeMultiplier?: number;
 }
 
 export class ConfirmPassengerOrderDto extends PassengerFareEstimateDto {}

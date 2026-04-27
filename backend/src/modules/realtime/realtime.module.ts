@@ -7,6 +7,7 @@ import { PassengerGateway } from './passenger.gateway';
 import { OrdersModule } from '../orders/orders.module';
 import { DispatchModule } from '../dispatch/dispatch.module';
 import { DriversModule } from '../drivers/drivers.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { DriversModule } from '../drivers/drivers.module';
     forwardRef(() => OrdersModule),
     forwardRef(() => DispatchModule),
     DriversModule,
+    AuthModule,
   ],
   providers: [PresenceService, DriverGateway, PassengerGateway],
   exports: [PresenceService, DriverGateway, PassengerGateway],
