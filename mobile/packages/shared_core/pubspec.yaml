@@ -1,0 +1,36 @@
+name: shared_core
+description: Shared core package for taxi platform mobile apps.
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dio: ^5.7.0
+  flutter_secure_storage: ^9.2.4
+  socket_io_client: ^3.0.0
+  geolocator: ^13.0.2
+  permission_handler: ^11.3.1
+  connectivity_plus: ^6.1.1
+  uuid: ^4.5.1
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+  equatable: ^2.0.7
+  flutter_bloc: ^8.1.6
+  get_it: ^8.0.3
+  yandex_maps_mapkit_lite: ^4.30.0-beta
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  build_runner: ^2.4.13
+  freezed: ^2.5.7
+  json_serializable: ^6.9.4
+
+flutter:
+  uses-material-design: true
