@@ -2,9 +2,38 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 
 declare global {
   interface Window {
-    ymaps: any;
+    mapgl?: MapGlApi;
   }
 }
+
+type LngLatTuple = [number, number];
+
+type MapGlMap = {
+  on: (eventName: string, callback: (event: unknown) => void) => void;
+  getCenter: () => LngLatTuple;
+  getZoom: () => number;
+  setCenter: (center: LngLatTuple) => void;
+  setZoom: (zoom: number) => void;
+  destroy: () => void;
+};
+
+type MapGlMarkerInstance = { destroy?: () => void };
+type MapGlPolylineInstance = { destroy?: () => void };
+
+type MapGlApi = {
+  Map: new (
+    element: HTMLDivElement,
+    options: { key: string; center: LngLatTuple; zoom: number },
+  ) => MapGlMap;
+  Marker: new (
+    map: MapGlMap,
+    options: { coordinates: LngLatTuple; color?: string },
+  ) => MapGlMarkerInstance;
+  Polyline: new (
+    map: MapGlMap,
+    options: { coordinates: LngLatTuple[]; color?: string; width?: number },
+  ) => MapGlPolylineInstance;
+};
 
 export interface MapMarker {
   id: string;
@@ -30,6 +59,7 @@ interface YandexMapProps {
   onCameraMove?: (center: { lat: number; lng: number }, zoom: number) => void;
   className?: string;
   style?: React.CSSProperties;
+  /** При true при первой отрисовке карты один раз пробует браузерную геолокацию. */
   myLocationEnabled?: boolean;
 }
 
@@ -52,117 +82,199 @@ export const YandexMap: React.FC<YandexMapProps> = ({
   myLocationEnabled = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<any>(null);
-  const markersRef = useRef<any[]>([]);
-  const routeLinesRef = useRef<any[]>([]);
+  const mapRef = useRef<MapGlMap | null>(null);
+  const markersRef = useRef<MapGlMarkerInstance[]>([]);
+  const routeLinesRef = useRef<MapGlPolylineInstance[]>([]);
+  const geolocationMarkerRef = useRef<MapGlMarkerInstance | null>(null);
+
+  const onMapClickRef = useRef(onMapClick);
+  const onCameraMoveRef = useRef(onCameraMove);
+  onMapClickRef.current = onMapClick;
+  onCameraMoveRef.current = onCameraMove;
+
+  const centerRef = useRef(center);
+  const zoomRef = useRef(zoom);
+  centerRef.current = center;
+  zoomRef.current = zoom;
+
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  /** Карта уже создана (чтобы синхронно двигать камеру, не уничтожая canvas). */
+  const [mapMounted, setMapMounted] = useState(false);
 
-  const initMap = useCallback(() => {
-    if (!window.ymaps || !containerRef.current) {
-      setError('Yandex Maps API не загружен. Проверьте API ключ.');
+  const loadMapGl = useCallback(async (): Promise<MapGlApi | undefined> => {
+    const cssHref = 'https://mapgl.2gis.com/api/css/v1/mapgl.css';
+    const hasCss = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
+      .some((el) => (el as HTMLLinkElement).href.includes(cssHref));
+    if (!hasCss) {
+      const css = document.createElement('link');
+      css.rel = 'stylesheet';
+      css.href = cssHref;
+      document.head.appendChild(css);
+    }
+
+    if (window.mapgl) return window.mapgl;
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://mapgl.2gis.com/api/js/v1';
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('2GIS script load failed'));
+      document.head.appendChild(script);
+    });
+    return window.mapgl;
+  }, []);
+
+  const initMapOnce = useCallback(async () => {
+    if (!containerRef.current || mapRef.current) return;
+
+    const apiKey = import.meta.env.VITE_DGIS_API_KEY as string | undefined;
+    if (!apiKey) {
+      setError('2GIS API ключ не найден. Проверьте VITE_DGIS_API_KEY в frontend/.env');
       setIsLoading(false);
       return;
     }
 
-    window.ymaps.ready(() => {
-      if (!containerRef.current) return;
-
-      try {
-        const map = new window.ymaps.Map(containerRef.current, {
-          center: [center.lat, center.lng],
-          zoom,
-          controls: ['zoomControl', 'geolocationControl'],
-        });
-
-        mapRef.current = map;
+    try {
+      const mapgl = await loadMapGl();
+      if (!mapgl) {
+        setError('2GIS API не загружен. Проверьте сеть и API ключ.');
         setIsLoading(false);
-        setError(null);
-
-        if (onMapClick) {
-          map.events.add('click', (e: any) => {
-            const coords = e.get('coords');
-            onMapClick(coords[0], coords[1]);
-          });
-        }
-
-        if (onCameraMove) {
-          map.events.add('boundschange', () => {
-            const mapCenter = map.getCenter();
-            const mapZoom = map.getZoom();
-            onCameraMove({ lat: mapCenter[0], lng: mapCenter[1] }, mapZoom);
-          });
-        }
-
-        if (myLocationEnabled) {
-          navigator.geolocation?.getCurrentPosition(
-            (pos) => {
-              map.setCenter([pos.coords.latitude, pos.coords.longitude], 15);
-            },
-            () => {
-              // geolocation denied — keep default center
-            },
-          );
-        }
-      } catch (err) {
-        setError('Ошибка инициализации карты');
-        setIsLoading(false);
+        return;
       }
-    });
-  }, [center.lat, center.lng, zoom, onMapClick, onCameraMove, myLocationEnabled]);
+
+      const c = centerRef.current;
+      const z = zoomRef.current;
+      const map = new mapgl.Map(containerRef.current, {
+        key: apiKey,
+        center: [c.lng, c.lat],
+        zoom: z,
+      });
+
+      mapRef.current = map;
+      setMapMounted(true);
+      setIsLoading(false);
+      setError(null);
+
+      map.on('click', (e: unknown) => {
+        const handler = onMapClickRef.current;
+        if (!handler) return;
+        const lngLat = (e as { lngLat?: unknown })?.lngLat;
+        const lng = Array.isArray(lngLat) ? lngLat[0] : undefined;
+        const lat = Array.isArray(lngLat) ? lngLat[1] : undefined;
+        if (typeof lat === 'number' && typeof lng === 'number') {
+          handler(lat, lng);
+        }
+      });
+
+      map.on('moveend', () => {
+        const cb = onCameraMoveRef.current;
+        if (!cb) return;
+        const mc = map.getCenter();
+        const mz = map.getZoom();
+        cb({ lat: mc[1], lng: mc[0] }, mz);
+      });
+
+      if (myLocationEnabled) {
+        navigator.geolocation?.getCurrentPosition(
+          (pos) => {
+            const coords: LngLatTuple = [pos.coords.longitude, pos.coords.latitude];
+            map.setCenter(coords);
+            map.setZoom(15);
+            geolocationMarkerRef.current?.destroy?.();
+            geolocationMarkerRef.current = new mapgl.Marker(map, {
+              coordinates: coords,
+              color: '#2563eb',
+            });
+          },
+          () => {
+            // родитель может показывать свою подсказку
+          },
+          { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
+        );
+      }
+
+      window.setTimeout(() => {
+        if (!containerRef.current) return;
+        const hasCanvas = containerRef.current.querySelector('canvas');
+        if (!hasCanvas) {
+          setError('2GIS карта не отрисовалась. Проверьте валидность API ключа и ограничения по домену.');
+        }
+      }, 1500);
+    } catch (_err) {
+      setError('Ошибка инициализации 2GIS карты');
+      setIsLoading(false);
+    }
+  }, [loadMapGl, myLocationEnabled]);
 
   useEffect(() => {
-    initMap();
+    void initMapOnce();
     return () => {
-      mapRef.current?.destroy();
+      geolocationMarkerRef.current?.destroy?.();
+      geolocationMarkerRef.current = null;
+      mapRef.current?.destroy?.();
       mapRef.current = null;
+      setMapMounted(false);
     };
-  }, []);
+  }, [initMapOnce]);
+
+  /** Сдвигаем камеру при смене center извне (например после геолокации) — без пересоздания карты. */
+  useEffect(() => {
+    if (!mapMounted || !mapRef.current) return;
+    mapRef.current.setCenter([center.lng, center.lat]);
+  }, [center.lat, center.lng, mapMounted]);
+
+  useEffect(() => {
+    if (!mapMounted || !mapRef.current) return;
+    mapRef.current.setZoom(zoom);
+  }, [zoom, mapMounted]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !window.ymaps) return;
+    if (!map || !window.mapgl) return;
 
-    markersRef.current.forEach((m) => map.geoObjects.remove(m));
+    markersRef.current.forEach((m) => m?.destroy?.());
     markersRef.current = [];
 
     markers.forEach((marker) => {
       const color = marker.color || MARKER_COLORS[marker.icon || 'default'] || MARKER_COLORS.default;
-      const placemark = new window.ymaps.Placemark(
-        [marker.lat, marker.lng],
-        { hintContent: marker.title || '' },
-        {
-          preset: 'islands#circleDotIcon',
-          iconColor: color,
-        },
-      );
-      map.geoObjects.add(placemark);
+      const placemark = new window.mapgl!.Marker(map, {
+        coordinates: [marker.lng, marker.lat],
+        color,
+      });
       markersRef.current.push(placemark);
     });
-  }, [markers]);
+  }, [markers, mapMounted]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !window.ymaps) return;
+    if (!map || !window.mapgl) return;
 
-    routeLinesRef.current.forEach((r) => map.geoObjects.remove(r));
+    routeLinesRef.current.forEach((r) => r?.destroy?.());
     routeLinesRef.current = [];
 
     routes.forEach((route) => {
-      const coords = route.points.map((p) => [p.lat, p.lng]);
-      const polyline = new window.ymaps.Polyline(
-        coords,
-        {},
-        {
-          strokeColor: route.color || '#3B82F6',
-          strokeWidth: route.strokeWidth || 4,
-          strokeOpacity: 0.8,
-        },
-      );
-      map.geoObjects.add(polyline);
+      const coords = route.points.map((p): LngLatTuple => [p.lng, p.lat]);
+      if (coords.length < 2) return;
+      const polyline = new window.mapgl!.Polyline(map, {
+        coordinates: coords,
+        color: route.color || '#3B82F6',
+        width: route.strokeWidth || 4,
+      });
       routeLinesRef.current.push(polyline);
     });
-  }, [routes]);
+  }, [routes, mapMounted]);
+
+  const retry = useCallback(async () => {
+    setError(null);
+    geolocationMarkerRef.current?.destroy?.();
+    geolocationMarkerRef.current = null;
+    mapRef.current?.destroy?.();
+    mapRef.current = null;
+    setMapMounted(false);
+    setIsLoading(true);
+    await initMapOnce();
+  }, [initMapOnce]);
 
   if (error) {
     return (
@@ -183,7 +295,8 @@ export const YandexMap: React.FC<YandexMapProps> = ({
       >
         <span style={{ color: '#ef4444', fontSize: 14 }}>{error}</span>
         <button
-          onClick={initMap}
+          type="button"
+          onClick={() => void retry()}
           style={{
             marginTop: 12,
             padding: '8px 16px',
@@ -214,7 +327,7 @@ export const YandexMap: React.FC<YandexMapProps> = ({
             zIndex: 1,
           }}
         >
-          Загрузка карты...
+          Загрузка 2GIS карты...
         </div>
       )}
       <div ref={containerRef} style={{ width: '100%', height: '100%', minHeight: 300 }} />

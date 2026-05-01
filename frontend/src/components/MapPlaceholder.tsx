@@ -1,54 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { MapPin, Navigation, Locate } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-declare global {
-  interface Window {
-    ymaps?: YMapsApi;
-  }
-}
-
-type YMapsApi = {
-  ready: (cb: () => void) => void;
-  Map: new (
-    element: HTMLElement,
-    options: {
-      center: number[];
-      zoom: number;
-      controls: string[];
-    },
-  ) => YMapsInstance;
-  multiRouter: {
-    MultiRoute: new (
-      model: {
-        referencePoints: string[];
-        params: { routingMode: string };
-      },
-      options: Record<string, unknown>,
-    ) => YMapsMultiRoute;
-  };
-};
-
-type YMapsInstance = {
-  destroy: () => void;
-  setCenter: (coords: number[], zoom?: number) => void;
-  geoObjects: {
-    add: (item: unknown) => void;
-    remove: (item: unknown) => void;
-  };
-};
-
-type YMapsMultiRoute = {
-  getActiveRoute: () => {
-    properties: {
-      get: (key: "distance" | "duration") => { text?: string } | undefined;
-    };
-  } | null;
-  events: {
-    add: (eventName: "update", handler: () => void) => void;
-  };
-};
+import { YandexMap, type MapMarker, type MapRoute } from "@/shared/maps";
 
 const DEFAULT_CENTER = [54.9009, 38.0782]; // Ступино
 
@@ -58,99 +12,60 @@ interface MapSectionProps {
 }
 
 const MapSection = ({ routeFrom, routeTo }: MapSectionProps) => {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<YMapsInstance | null>(null);
-  const routeRef = useRef<YMapsMultiRoute | null>(null);
+  void routeFrom;
+  void routeTo;
   const [locating, setLocating] = useState(false);
-  const [routeInfo, setRouteInfo] = useState<string | null>(null);
+  const [geoError, setGeoError] = useState<string | null>(null);
+  const [mapZoom, setMapZoom] = useState(13);
+  const [center, setCenter] = useState({ lat: DEFAULT_CENTER[0], lng: DEFAULT_CENTER[1] });
 
-  // Init map
-  useEffect(() => {
-    if (!containerRef.current) return;
+  const markers = useMemo<MapMarker[]>(() => {
+    return [
+      {
+        id: "center",
+        lat: center.lat,
+        lng: center.lng,
+        icon: "default",
+        title: "Текущее местоположение",
+      },
+    ];
+  }, [center.lat, center.lng]);
 
-    const initMap = () => {
-      window.ymaps.ready(() => {
-        if (mapRef.current) return;
-
-        const map = new window.ymaps.Map(containerRef.current, {
-          center: DEFAULT_CENTER,
-          zoom: 11,
-          controls: ["zoomControl", "fullscreenControl"],
-        });
-
-        mapRef.current = map;
-      });
-    };
-
-    if (window.ymaps) {
-      initMap();
-    }
-
-    return () => {
-      if (mapRef.current) {
-        mapRef.current.destroy();
-        mapRef.current = null;
-      }
-    };
+  const routes = useMemo<MapRoute[]>(() => {
+    // На лендинге нет геокодинга, поэтому маршрут строим в рабочих кабинетах.
+    return [];
   }, []);
 
-  // Build route from form inputs
-  useEffect(() => {
-    if (!mapRef.current || !window.ymaps || !routeFrom || !routeTo) return;
-
-    const map = mapRef.current;
-
-    // Clear previous route
-    if (routeRef.current) {
-      map.geoObjects.remove(routeRef.current);
-      routeRef.current = null;
-    }
-
-    setRouteInfo(null);
-
-    // Use geocoding-based multiRoute with city names
-    const multiRoute = new window.ymaps.multiRouter.MultiRoute(
-      {
-        referencePoints: [routeFrom, routeTo],
-        params: { routingMode: "auto" },
-      },
-      {
-        boundsAutoApply: true,
-        wayPointStartIconColor: "#22c55e",
-        wayPointFinishIconColor: "#D4A853",
-        routeActiveStrokeColor: "#D4A853",
-        routeActiveStrokeWidth: 4,
-      }
-    );
-
-    multiRoute.events.add("update", () => {
-      try {
-        const activeRoute = multiRoute.getActiveRoute();
-        if (activeRoute) {
-          const distance = activeRoute.properties.get("distance")?.text || "";
-          const duration = activeRoute.properties.get("duration")?.text || "";
-          setRouteInfo(`${distance} • ${duration}`);
-        }
-      } catch {
-        // ignore
-      }
-    });
-
-    map.geoObjects.add(multiRoute);
-    routeRef.current = multiRoute;
-  }, [routeFrom, routeTo]);
-
   const handleLocate = () => {
-    if (!navigator.geolocation || !mapRef.current) return;
+    if (!navigator.geolocation) {
+      setGeoError(
+        "Геолокация недоступна: неподдерживаемый браузер или небезопасный контекст (нужны https или localhost).",
+      );
+      return;
+    }
+    setGeoError(null);
     setLocating(true);
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const coords = [pos.coords.latitude, pos.coords.longitude];
-        mapRef.current?.setCenter(coords, 13);
+        setCenter({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setMapZoom(15);
         setLocating(false);
       },
-      () => setLocating(false),
-      { enableHighAccuracy: true }
+      (geoErr: GeolocationPositionError) => {
+        setLocating(false);
+        if (geoErr.code === geoErr.PERMISSION_DENIED) {
+          setGeoError(
+            "Доступ к геолокации запрещён. В адресной строке разрешите «Местоположение» для этого сайта.",
+          );
+        } else if (geoErr.code === geoErr.TIMEOUT) {
+          setGeoError("Не удалось определить координаты за отведённое время. Повторите или проверьте службы локации в Windows.");
+        } else if (geoErr.code === geoErr.POSITION_UNAVAILABLE) {
+          setGeoError("Позиция недоступна (GPS/Wi‑Fi выключены или нет сигнала).");
+        } else {
+          setGeoError("Не удалось определить местоположение.");
+        }
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 },
     );
   };
 
@@ -187,13 +102,16 @@ const MapSection = ({ routeFrom, routeTo }: MapSectionProps) => {
               <Locate className="h-4 w-4 mr-2" />
               {locating ? "Определяем…" : "Моё местоположение"}
             </Button>
-            {routeInfo && (
-              <span className="text-sm text-primary font-medium">{routeInfo}</span>
-            )}
+            {geoError ? (
+              <span className="text-sm text-amber-600 max-w-xl">{geoError}</span>
+            ) : null}
           </div>
 
-          <div
-            ref={containerRef}
+          <YandexMap
+            center={center}
+            zoom={mapZoom}
+            markers={markers}
+            routes={routes}
             className="w-full aspect-video rounded-xl overflow-hidden border border-border/50"
           />
 

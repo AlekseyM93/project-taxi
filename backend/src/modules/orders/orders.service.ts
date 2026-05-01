@@ -182,7 +182,7 @@ export class OrdersService {
   }
 
   private async calculatePassengerFareEstimate(dto: PassengerFareEstimateDto) {
-    const routeEstimate = this.geo.estimateRoute({
+    const routeEstimate = await this.geo.routeEstimate({
       fromLat: dto.fromLat,
       fromLng: dto.fromLng,
       toLat: dto.toLat,
@@ -1933,7 +1933,7 @@ export class OrdersService {
     const to = this.extractLatLng(order.toLocation);
     const routeEstimate =
       this.hasValidLatLng(from) && this.hasValidLatLng(to)
-        ? this.geo.estimateRoute({
+        ? await this.geo.routeEstimate({
             fromLat: from.lat,
             fromLng: from.lng,
             toLat: to.lat,

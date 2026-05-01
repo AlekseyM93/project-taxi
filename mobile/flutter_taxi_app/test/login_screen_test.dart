@@ -19,11 +19,11 @@ void main() {
       await tester.pumpWidget(MaterialApp(
         home: LoginScreen(
           authRepository: authRepository,
-          onLoginSuccess: (_) {},
+          onLoginSuccess: (_) async {},
         ),
       ));
 
-      expect(find.text('Такси Платформа'), findsOneWidget);
+      expect(find.text('Такси платформа'), findsOneWidget);
       expect(find.byType(TextField), findsNWidgets(2));
       expect(find.text('Войти'), findsOneWidget);
     });
@@ -32,7 +32,7 @@ void main() {
       await tester.pumpWidget(MaterialApp(
         home: LoginScreen(
           authRepository: authRepository,
-          onLoginSuccess: (_) {},
+          onLoginSuccess: (_) async {},
         ),
       ));
 
@@ -47,7 +47,7 @@ void main() {
       await tester.pumpWidget(MaterialApp(
         home: LoginScreen(
           authRepository: authRepository,
-          onLoginSuccess: (_) {},
+          onLoginSuccess: (_) async {},
         ),
       ));
 

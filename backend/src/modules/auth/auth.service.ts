@@ -82,7 +82,12 @@ export class AuthService implements OnModuleDestroy {
       role: user.role,
       phoneMasked: this.maskPhone(user.phone),
     });
-    return { id: user.id };
+    const tokens = await this.issueTokenPair({
+      sub: user.id,
+      role: user.role,
+      driverId: user.role === 'DRIVER' ? user.id : undefined,
+    });
+    return { id: user.id, role: user.role, ...tokens };
   }
 
   async login(

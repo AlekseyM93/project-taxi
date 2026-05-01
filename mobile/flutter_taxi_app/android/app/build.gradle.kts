@@ -20,20 +20,35 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.example.taxi_platform_mobile"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
+    flavorDimensions += "role"
+    productFlavors {
+        create("unified") {
+            dimension = "role"
+            applicationId = "com.example.taxi_platform_mobile"
+            resValue("string", "app_name", "Такси платформа")
+        }
+        create("passenger") {
+            dimension = "role"
+            applicationId = "com.example.taxi.passenger"
+            resValue("string", "app_name", "Такси Пассажир")
+        }
+        create("driver") {
+            dimension = "role"
+            applicationId = "com.example.taxi.driver"
+            resValue("string", "app_name", "Такси Водитель")
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // TODO: Add your own signing config for production.
             signingConfig = signingConfigs.getByName("debug")
         }
     }

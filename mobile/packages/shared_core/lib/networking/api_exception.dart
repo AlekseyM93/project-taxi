@@ -31,12 +31,36 @@ class ApiExceptionMapper {
         final statusCode = error.response?.statusCode;
         if (statusCode == 401) {
           final data = error.response?.data;
-          final message = data is Map ? (data['message'] ?? 'Unauthorized') : 'Unauthorized';
+          final path = error.requestOptions.uri.path;
+
+          /// Nest [ApiExceptionFilter]: `{ ok:false, error: { reason, code, … } }`
+          final apiReason =
+              data is Map && data['error'] is Map
+                  ? ((data['error'] as Map)['reason'] ?? (data['error'] as Map)['code'])
+                      ?.toString()
+                      .toUpperCase()
+                  : null;
+          final nestedMessage =
+              data is Map && data['message'] != null ? data['message'].toString() : null;
+
+          final isAuthEntry =
+              path.endsWith('/auth/login') ||
+              path.endsWith('/auth/register') ||
+              path.contains('/auth/login/recovery');
+          final isInvalidCredentials = apiReason == 'INVALID_CREDENTIALS';
+
+          /// Протухший refresh / истёкший access после обновления — «сессия истекла»;
+          /// 401 при входе (в т.ч. неверный пароль) — нет.
+          final sessionExpired = !isAuthEntry && !isInvalidCredentials;
+
+          final message = nestedMessage ?? apiReason ?? 'Unauthorized';
+
           return AuthException(
-            message: message.toString(),
+            message: message,
             originalError: error,
             stackTrace: stackTrace,
-            isSessionExpired: true,
+            isSessionExpired: sessionExpired,
+            userFacingOverride: isInvalidCredentials ? 'Неверный телефон или пароль' : null,
           );
         }
         if (statusCode == 403) {

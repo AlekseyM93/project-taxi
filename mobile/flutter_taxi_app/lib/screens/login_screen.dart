@@ -1,15 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:shared_core/shared_core.dart';
 
+import '../taxi_client_kind.dart';
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({
     super.key,
     required this.authRepository,
     required this.onLoginSuccess,
+    this.clientKind = TaxiClientKind.universal,
+    this.appTitle = 'Такси платформа',
+    this.initialBannerError,
+    this.onClearInitialBanner,
   });
 
   final AuthRepository authRepository;
-  final void Function(AuthSession session) onLoginSuccess;
+  final Future<void> Function(AuthSession session) onLoginSuccess;
+  final TaxiClientKind clientKind;
+  final String appTitle;
+  final String? initialBannerError;
+  final VoidCallback? onClearInitialBanner;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -21,7 +31,31 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
   String? _error;
   bool _isRegisterMode = false;
-  String _selectedRole = 'PASSENGER';
+  late String _selectedRole;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedRole = forcedRoleForRegistration(widget.clientKind) ?? 'PASSENGER';
+    if (widget.initialBannerError != null) {
+      _error = widget.initialBannerError;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        widget.onClearInitialBanner?.call();
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(LoginScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.initialBannerError != null &&
+        widget.initialBannerError != oldWidget.initialBannerError) {
+      setState(() => _error = widget.initialBannerError);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        widget.onClearInitialBanner?.call();
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -29,6 +63,10 @@ class _LoginScreenState extends State<LoginScreen> {
     _passwordController.dispose();
     super.dispose();
   }
+
+  bool get _roleLocked =>
+      widget.clientKind == TaxiClientKind.passenger ||
+      widget.clientKind == TaxiClientKind.driver;
 
   Future<void> _submit() async {
     final phone = _phoneController.text.trim();
@@ -44,12 +82,13 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
+      final role = forcedRoleForRegistration(widget.clientKind) ?? _selectedRole;
       AuthSession session;
       if (_isRegisterMode) {
         session = await widget.authRepository.register(
           phone: phone,
           password: password,
-          role: _selectedRole,
+          role: role,
         );
       } else {
         session = await widget.authRepository.login(
@@ -58,7 +97,7 @@ class _LoginScreenState extends State<LoginScreen> {
         );
       }
       if (!mounted) return;
-      widget.onLoginSuccess(session);
+      await widget.onLoginSuccess(session);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -71,6 +110,11 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final showRolePicker =
+        !_roleLocked &&
+        widget.clientKind == TaxiClientKind.universal &&
+        _isRegisterMode;
+
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -83,7 +127,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 Icon(Icons.local_taxi, size: 80, color: Theme.of(context).colorScheme.primary),
                 const SizedBox(height: 16),
                 Text(
-                  'Такси Платформа',
+                  widget.appTitle,
                   style: Theme.of(context).textTheme.headlineMedium?.copyWith(fontWeight: FontWeight.bold),
                   textAlign: TextAlign.center,
                 ),
@@ -107,7 +151,15 @@ class _LoginScreenState extends State<LoginScreen> {
                     border: OutlineInputBorder(),
                   ),
                 ),
-                if (_isRegisterMode) ...[
+                if (_roleLocked && _isRegisterMode) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    'Роль: ${widget.clientKind == TaxiClientKind.driver ? 'Водитель' : 'Пассажир'}',
+                    style: Theme.of(context).textTheme.bodyMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+                if (showRolePicker) ...[
                   const SizedBox(height: 12),
                   SegmentedButton<String>(
                     segments: const [

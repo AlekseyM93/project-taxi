@@ -1,11 +1,21 @@
 import 'package:shared_core/shared_core.dart';
+import 'package:uuid/uuid.dart';
 
 import '../domain/shift_repository.dart';
 
 class ShiftRepositoryImpl implements ShiftRepository {
-  ShiftRepositoryImpl({required ApiClient apiClient}) : _apiClient = apiClient;
+  ShiftRepositoryImpl({
+    required ApiClient apiClient,
+    OfflineCommandQueue? offlineQueue,
+    String? deviceId,
+  })  : _apiClient = apiClient,
+        _offlineQueue = offlineQueue,
+        _deviceId = deviceId;
 
   final ApiClient _apiClient;
+  final OfflineCommandQueue? _offlineQueue;
+  final String? _deviceId;
+  static const _uuid = Uuid();
 
   @override
   Future<ShiftInfo> getShiftStatus() async {
@@ -36,7 +46,10 @@ class ShiftRepositoryImpl implements ShiftRepository {
       final response = await _apiClient.get('/orders/me/driver/active/card');
       final data = response.data;
       if (data == null) return null;
-      return _parseOrderCard(data as Map<String, dynamic>);
+      final root = data as Map<String, dynamic>;
+      final active = root['activeOrder'];
+      if (active == null) return null;
+      return _parseOrderCard(active as Map<String, dynamic>);
     } catch (e) {
       if (e is NetworkException && e.statusCode == 404) return null;
       rethrow;
@@ -45,22 +58,58 @@ class ShiftRepositoryImpl implements ShiftRepository {
 
   @override
   Future<void> acceptOrder(String orderId) async {
-    await _apiClient.post('/orders/me/driver/$orderId/accept');
+    try {
+      await _apiClient.post('/orders/me/driver/$orderId/accept');
+    } on NetworkException catch (e, st) {
+      if (_offlineQueue == null) Error.throwWithStackTrace(e, st);
+      await _enqueueDriverOp('DRIVER_ACCEPT_ORDER', orderId);
+      throw const QueuedForSyncException();
+    }
   }
 
   @override
   Future<void> startOrder(String orderId) async {
-    await _apiClient.post('/orders/me/driver/$orderId/start');
+    try {
+      await _apiClient.post('/orders/me/driver/$orderId/start');
+    } on NetworkException catch (e, st) {
+      if (_offlineQueue == null) Error.throwWithStackTrace(e, st);
+      await _enqueueDriverOp('DRIVER_START_ORDER', orderId);
+      throw const QueuedForSyncException();
+    }
   }
 
   @override
   Future<void> finishOrder(String orderId) async {
-    await _apiClient.post('/orders/me/driver/$orderId/finish');
+    try {
+      await _apiClient.post('/orders/me/driver/$orderId/finish');
+    } on NetworkException catch (e, st) {
+      if (_offlineQueue == null) Error.throwWithStackTrace(e, st);
+      await _enqueueDriverOp('DRIVER_FINISH_ORDER', orderId);
+      throw const QueuedForSyncException();
+    }
   }
 
   @override
   Future<void> cancelOrder(String orderId) async {
-    await _apiClient.post('/orders/me/driver/$orderId/cancel');
+    try {
+      await _apiClient.post('/orders/me/driver/$orderId/cancel');
+    } on NetworkException catch (e, st) {
+      if (_offlineQueue == null) Error.throwWithStackTrace(e, st);
+      await _enqueueDriverOp('DRIVER_CANCEL_ORDER', orderId);
+      throw const QueuedForSyncException();
+    }
+  }
+
+  Future<void> _enqueueDriverOp(String operationType, String orderId) async {
+    await _offlineQueue!.enqueue(
+      OfflineCommand(
+        commandId: _uuid.v4(),
+        operationType: operationType,
+        payload: {'orderId': orderId},
+        createdAtIso: DateTime.now().toUtc().toIso8601String(),
+        deviceId: _deviceId,
+      ),
+    );
   }
 
   @override
@@ -120,13 +169,13 @@ class ShiftRepositoryImpl implements ShiftRepository {
       id: data['id'] as String? ?? '',
       status: data['status'] as String? ?? 'UNKNOWN',
       passengerName: data['passengerName'] as String?,
-      pickupLat: (data['fromLat'] as num?)?.toDouble(),
-      pickupLng: (data['fromLng'] as num?)?.toDouble(),
-      dropoffLat: (data['toLat'] as num?)?.toDouble(),
-      dropoffLng: (data['toLng'] as num?)?.toDouble(),
+      pickupLat: orderPickupLat(data),
+      pickupLng: orderPickupLng(data),
+      dropoffLat: orderDropoffLat(data),
+      dropoffLng: orderDropoffLng(data),
       pickupAddress: data['pickupAddress'] as String?,
       dropoffAddress: data['dropoffAddress'] as String?,
-      price: (data['price'] as num?)?.toDouble(),
+      price: parseOrderPriceField(data['price']),
       createdAt: data['createdAt'] as String?,
     );
   }

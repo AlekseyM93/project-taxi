@@ -4,6 +4,7 @@ import '../logging/safe_logger.dart';
 import '../networking/api_client.dart';
 import '../storage/secure_storage.dart';
 import 'auth_session.dart';
+import 'jwt_access_claims.dart';
 
 class AuthRepository {
   AuthRepository({
@@ -56,11 +57,13 @@ class AuthRepository {
       requireAuth: false,
     );
     final body = response.data as Map<String, dynamic>;
+    final accessToken = body['accessToken'] as String;
+    final claims = parseAccessTokenIdentity(accessToken);
     final session = AuthSession(
-      accessToken: body['accessToken'] as String,
+      accessToken: accessToken,
       refreshToken: body['refreshToken'] as String? ?? '',
-      userId: body['id'] as String? ?? '',
-      role: body['role'] as String? ?? 'PASSENGER',
+      userId: body['id'] as String? ?? claims.userId,
+      role: body['role'] as String? ?? claims.role,
     );
     await _persistSession(session);
     _logger.info('Login successful', {'role': session.role});
@@ -78,11 +81,13 @@ class AuthRepository {
       requireAuth: false,
     );
     final body = response.data as Map<String, dynamic>;
+    final accessToken = body['accessToken'] as String;
+    final claims = parseAccessTokenIdentity(accessToken);
     final session = AuthSession(
-      accessToken: body['accessToken'] as String,
+      accessToken: accessToken,
       refreshToken: body['refreshToken'] as String? ?? '',
-      userId: body['id'] as String? ?? '',
-      role: body['role'] as String? ?? role,
+      userId: body['id'] as String? ?? claims.userId,
+      role: body['role'] as String? ?? claims.role,
     );
     await _persistSession(session);
     _logger.info('Registration successful', {'role': session.role});
@@ -105,10 +110,20 @@ class AuthRepository {
         refreshToken: newRefreshToken,
       );
 
+      final claims = parseAccessTokenIdentity(newAccessToken);
+
       if (_currentSession != null) {
-        _currentSession = _currentSession!.copyWith(
+        final prev = _currentSession!;
+        final repairFromClaims = prev.userId.isEmpty && claims.userId.isNotEmpty;
+        _currentSession = AuthSession(
           accessToken: newAccessToken,
           refreshToken: newRefreshToken,
+          userId: repairFromClaims ? claims.userId : prev.userId,
+          role: repairFromClaims ? claims.role : prev.role,
+        );
+        await _secureStorage.saveUserInfo(
+          userId: _currentSession!.userId,
+          role: _currentSession!.role,
         );
         _sessionController.add(_currentSession);
       }

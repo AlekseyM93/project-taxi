@@ -11,6 +11,7 @@ import {
   GeoSuggestResponse,
 } from '../geo.types';
 import { InternalGeoProvider } from './internal-geo.provider';
+import { OsrmDrivingRouteService } from '../osrm-driving-route.service';
 
 @Injectable()
 export class YandexGeoProvider implements MapProviderAdapter {
@@ -19,6 +20,7 @@ export class YandexGeoProvider implements MapProviderAdapter {
   constructor(
     private readonly configService: ConfigService,
     private readonly internalGeoProvider: InternalGeoProvider,
+    private readonly osrmDrivingRoute: OsrmDrivingRouteService,
   ) {}
 
   async suggest(dto: GeoSuggestDto): Promise<GeoSuggestResponse> {
@@ -89,6 +91,15 @@ export class YandexGeoProvider implements MapProviderAdapter {
   }
 
   async routeEstimate(dto: GeoRouteEstimateDto): Promise<GeoRouteEstimateResponse> {
+    const road = await this.osrmDrivingRoute.tryDrivingRoute(dto);
+    if (road) {
+      return {
+        provider: this.providerCode,
+        distanceKm: road.distanceKm,
+        estimatedDurationMin: road.estimatedDurationMin,
+        polyline: road.polyline,
+      };
+    }
     const estimated = this.internalGeoProvider.routeEstimateSync(dto);
     return {
       provider: this.providerCode,

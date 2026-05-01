@@ -35,6 +35,7 @@ import {
 } from "@/services/driverAppApi";
 import { useToast } from "@/hooks/use-toast";
 import { useDriverRealtime } from "@/features/realtime/useDriverRealtime";
+import { YandexMap, type MapMarker, type MapRoute } from "@/shared/maps";
 
 type DriverRecord = Record<string, unknown>;
 type GeoPoint = { lat: number; lng: number };
@@ -54,38 +55,6 @@ type DriverRealtimeLocationPayload = {
   clientTs?: string;
   sequence?: number;
 };
-
-type YMapsMap = {
-  destroy: () => void;
-  setCenter: (coords: number[], zoom?: number) => void;
-  geoObjects: {
-    add: (item: unknown) => void;
-    remove: (item: unknown) => void;
-  };
-};
-
-type YMapsApi = {
-  ready: (cb: () => void) => void;
-  Map: new (
-    element: HTMLElement,
-    options: {
-      center: number[];
-      zoom: number;
-      controls: string[];
-    },
-  ) => YMapsMap;
-  Placemark: new (
-    coords: number[],
-    properties?: Record<string, unknown>,
-    options?: Record<string, unknown>,
-  ) => unknown;
-};
-
-declare global {
-  interface Window {
-    ymaps?: YMapsApi;
-  }
-}
 
 function readText(row: DriverRecord, key: string, fallback = "-") {
   const value = row[key];
@@ -136,11 +105,10 @@ const DriverDashboard = () => {
   );
   const [autoTrackingEnabled, setAutoTrackingEnabled] = useState(true);
   const [liveRouteEnabled, setLiveRouteEnabled] = useState(true);
-  const mapContainerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<YMapsMap | null>(null);
-  const driverPlacemarkRef = useRef<unknown | null>(null);
-  const pickupPlacemarkRef = useRef<unknown | null>(null);
-  const dropoffPlacemarkRef = useRef<unknown | null>(null);
+  const [mapCenter, setMapCenter] = useState<GeoPoint>({
+    lat: 55.751244,
+    lng: 37.618423,
+  });
   const locationWatchIdRef = useRef<number | null>(null);
   const locationSequenceRef = useRef(0);
   const lastAutoEtaAtRef = useRef(0);
@@ -416,9 +384,7 @@ const DriverDashboard = () => {
         });
         setDriverLocating(false);
         setMapError(null);
-        if (mapRef.current) {
-          mapRef.current.setCenter([nextPoint.lat, nextPoint.lng], 13);
-        }
+        setMapCenter(nextPoint);
       },
       () => {
         setDriverLocating(false);
@@ -485,85 +451,17 @@ const DriverDashboard = () => {
   }, [activeOrderId, autoTrackingEnabled, pushRealtimeLocationUpdate]);
 
   useEffect(() => {
-    if (!mapContainerRef.current) {
-      return;
-    }
-    if (!window.ymaps) {
-      setMapError("Карта недоступна. ETA можно считать только через API.");
-      return;
-    }
-    window.ymaps.ready(() => {
-      if (!mapContainerRef.current || mapRef.current) {
-        return;
-      }
-      mapRef.current = new window.ymaps!.Map(mapContainerRef.current, {
-        center: [55.751244, 37.618423],
-        zoom: 11,
-        controls: ["zoomControl", "fullscreenControl"],
-      });
-      setMapReady(true);
-    });
-    return () => {
-      if (mapRef.current) {
-        mapRef.current.destroy();
-        mapRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
     setPickupRouteInfo(null);
     setTripRouteInfo(null);
   }, [activeOrderId]);
 
   useEffect(() => {
-    if (!mapRef.current || !window.ymaps) {
-      return;
+    if (driverPosition) {
+      setMapCenter(driverPosition);
+    } else if (pickupPoint) {
+      setMapCenter(pickupPoint);
     }
-    if (pickupPlacemarkRef.current) {
-      mapRef.current.geoObjects.remove(pickupPlacemarkRef.current);
-      pickupPlacemarkRef.current = null;
-    }
-    if (dropoffPlacemarkRef.current) {
-      mapRef.current.geoObjects.remove(dropoffPlacemarkRef.current);
-      dropoffPlacemarkRef.current = null;
-    }
-    if (pickupPoint) {
-      pickupPlacemarkRef.current = new window.ymaps.Placemark(
-        [pickupPoint.lat, pickupPoint.lng],
-        { balloonContent: "Точка A (pickup)" },
-        { preset: "islands#greenDotIcon" },
-      );
-      mapRef.current.geoObjects.add(pickupPlacemarkRef.current);
-    }
-    if (dropoffPoint) {
-      dropoffPlacemarkRef.current = new window.ymaps.Placemark(
-        [dropoffPoint.lat, dropoffPoint.lng],
-        { balloonContent: "Точка B (dropoff)" },
-        { preset: "islands#redDotIcon" },
-      );
-      mapRef.current.geoObjects.add(dropoffPlacemarkRef.current);
-    }
-  }, [pickupPoint, dropoffPoint]);
-
-  useEffect(() => {
-    if (!mapRef.current || !window.ymaps) {
-      return;
-    }
-    if (driverPlacemarkRef.current) {
-      mapRef.current.geoObjects.remove(driverPlacemarkRef.current);
-      driverPlacemarkRef.current = null;
-    }
-    if (!driverPosition) {
-      return;
-    }
-    driverPlacemarkRef.current = new window.ymaps.Placemark(
-      [driverPosition.lat, driverPosition.lng],
-      { balloonContent: "Водитель" },
-      { preset: "islands#blueDotIcon" },
-    );
-    mapRef.current.geoObjects.add(driverPlacemarkRef.current);
-  }, [driverPosition]);
+  }, [driverPosition, pickupPoint]);
 
   useEffect(() => {
     if (!activeOrderId || !pickupPoint || !dropoffPoint) {
@@ -585,6 +483,63 @@ const DriverDashboard = () => {
     void estimatePickupRoute();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeStatus, driverPosition, liveRouteEnabled, pickupPoint]);
+
+  const mapMarkers = useMemo<MapMarker[]>(() => {
+    const markers: MapMarker[] = [];
+    if (driverPosition) {
+      markers.push({
+        id: "driver",
+        lat: driverPosition.lat,
+        lng: driverPosition.lng,
+        icon: "driver",
+        title: "Водитель",
+      });
+    }
+    if (pickupPoint) {
+      markers.push({
+        id: "pickup",
+        lat: pickupPoint.lat,
+        lng: pickupPoint.lng,
+        icon: "pickup",
+        title: "Точка A",
+      });
+    }
+    if (dropoffPoint) {
+      markers.push({
+        id: "dropoff",
+        lat: dropoffPoint.lat,
+        lng: dropoffPoint.lng,
+        icon: "dropoff",
+        title: "Точка B",
+      });
+    }
+    return markers;
+  }, [driverPosition, dropoffPoint, pickupPoint]);
+
+  const mapRoutes = useMemo<MapRoute[]>(() => {
+    const routes: MapRoute[] = [];
+    if (driverPosition && pickupPoint) {
+      routes.push({
+        points: [
+          { lat: driverPosition.lat, lng: driverPosition.lng },
+          { lat: pickupPoint.lat, lng: pickupPoint.lng },
+        ],
+        color: "#10B981",
+        strokeWidth: 4,
+      });
+    }
+    if (pickupPoint && dropoffPoint) {
+      routes.push({
+        points: [
+          { lat: pickupPoint.lat, lng: pickupPoint.lng },
+          { lat: dropoffPoint.lat, lng: dropoffPoint.lng },
+        ],
+        color: "#3B82F6",
+        strokeWidth: 4,
+      });
+    }
+    return routes;
+  }, [driverPosition, dropoffPoint, pickupPoint]);
 
   if (!user || !roleMatches(user.role, "DRIVER")) {
     return null;
@@ -789,8 +744,14 @@ const DriverDashboard = () => {
                               ETA A→B
                             </Button>
                           </div>
-                          <div
-                            ref={mapContainerRef}
+                          <YandexMap
+                            center={mapCenter}
+                            zoom={12}
+                            markers={mapMarkers}
+                            routes={mapRoutes}
+                            onCameraMove={() => {
+                              if (!mapReady) setMapReady(true);
+                            }}
                             className="h-52 w-full rounded-md border border-border/50"
                           />
                           <p className="mt-2 text-xs text-muted-foreground">

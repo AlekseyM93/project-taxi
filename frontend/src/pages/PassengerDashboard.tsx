@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Header from "@/components/Header";
@@ -22,42 +22,10 @@ import {
 } from "@/services/passengerApi";
 import { useToast } from "@/hooks/use-toast";
 import { usePassengerRealtime } from "@/features/realtime/usePassengerRealtime";
+import { YandexMap, type MapMarker, type MapRoute } from "@/shared/maps";
 
 type OrderLike = Record<string, unknown>;
 type GeoPoint = { lat: number; lng: number };
-
-type YMapsMap = {
-  destroy: () => void;
-  geoObjects: {
-    add: (item: unknown) => void;
-    remove: (item: unknown) => void;
-  };
-  events: {
-    add: (
-      eventName: "click",
-      handler: (event: { get: (key: "coords") => number[] | undefined }) => void,
-    ) => void;
-  };
-};
-
-type YMapsApi = {
-  ready: (cb: () => void) => void;
-  Map: new (
-    element: HTMLElement,
-    options: {
-      center: number[];
-      zoom: number;
-      controls: string[];
-    },
-  ) => YMapsMap;
-  Placemark: new (coords: number[], properties?: Record<string, unknown>, options?: Record<string, unknown>) => unknown;
-};
-
-declare global {
-  interface Window {
-    ymaps?: YMapsApi;
-  }
-}
 
 function readText(order: OrderLike, key: string, fallback = "-") {
   const value = order[key];
@@ -124,12 +92,10 @@ const PassengerDashboard = () => {
   const [realtimeStatus, setRealtimeStatus] = useState<string | null>(null);
   const [lastRealtimeAt, setLastRealtimeAt] = useState<string | null>(null);
   const [followDriverOnMap, setFollowDriverOnMap] = useState(true);
-  const mapContainerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<YMapsMap | null>(null);
-  const fromPlacemarkRef = useRef<unknown | null>(null);
-  const toPlacemarkRef = useRef<unknown | null>(null);
-  const driverPlacemarkRef = useRef<unknown | null>(null);
-  const mapPickModeRef = useRef<"from" | "to">("from");
+  const [mapCenter, setMapCenter] = useState<GeoPoint>({
+    lat: 55.751244,
+    lng: 37.618423,
+  });
 
   useEffect(() => {
     if (!user || !roleMatches(user.role, "PASSENGER")) {
@@ -395,10 +361,6 @@ const PassengerDashboard = () => {
   };
 
   useEffect(() => {
-    mapPickModeRef.current = mapPickMode;
-  }, [mapPickMode]);
-
-  useEffect(() => {
     setRoutePreview(null);
   }, [fromLat, fromLng, toLat, toLng]);
 
@@ -411,132 +373,98 @@ const PassengerDashboard = () => {
   }, [activeOrderId]);
 
   useEffect(() => {
-    if (!mapContainerRef.current) {
-      return;
-    }
-    if (!window.ymaps) {
-      setMapError("Карта недоступна. Используйте ручной ввод координат.");
-      return;
-    }
-    window.ymaps.ready(() => {
-      if (!mapContainerRef.current || mapRef.current) {
-        return;
-      }
-      const map = new window.ymaps!.Map(mapContainerRef.current, {
-        center: [55.751244, 37.618423],
-        zoom: 11,
-        controls: ["zoomControl", "fullscreenControl"],
-      });
-      map.events.add("click", async (event) => {
-        const coords = event?.get?.("coords") as number[] | undefined;
-        if (!Array.isArray(coords) || coords.length < 2) {
-          return;
-        }
-        const [lat, lng] = coords;
-        if (mapPickModeRef.current === "from") {
-          setFromLat(lat.toFixed(6));
-          setFromLng(lng.toFixed(6));
-        } else {
-          setToLat(lat.toFixed(6));
-          setToLng(lng.toFixed(6));
-        }
-        try {
-          const reverse = await reverseGeoMutation.mutateAsync({ lat, lng });
-          if (reverse.status < 300 && reverse.body?.normalizedAddress) {
-            if (mapPickModeRef.current === "from") {
-              setFromAddress(reverse.body.normalizedAddress);
-            } else {
-              setToAddress(reverse.body.normalizedAddress);
-            }
-            if (reverse.body.fallbackUsed) {
-              setMapError("Geo fallback активирован: отображены приближенные данные.");
-            } else {
-              setMapError(null);
-            }
-          }
-        } catch {
-          setMapError("Не удалось получить адрес точки. Координаты обновлены вручную.");
-        }
-      });
-      mapRef.current = map;
-      setMapReady(true);
-    });
-    return () => {
-      if (mapRef.current) {
-        mapRef.current.destroy();
-        mapRef.current = null;
-      }
-    };
-  }, [reverseGeoMutation]);
-
-  useEffect(() => {
-    if (!mapRef.current || !window.ymaps) {
-      return;
-    }
-    const fromLatNumber = parseCoordinate(fromLat);
-    const fromLngNumber = parseCoordinate(fromLng);
-    if (fromLatNumber !== null && fromLngNumber !== null) {
-      if (fromPlacemarkRef.current) {
-        mapRef.current.geoObjects.remove(fromPlacemarkRef.current);
-      }
-      fromPlacemarkRef.current = new window.ymaps.Placemark(
-        [fromLatNumber, fromLngNumber],
-        { balloonContent: "Точка A" },
-        { preset: "islands#greenDotIcon" },
-      );
-      mapRef.current.geoObjects.add(fromPlacemarkRef.current);
-    }
-  }, [fromLat, fromLng]);
-
-  useEffect(() => {
-    if (!mapRef.current || !window.ymaps) {
-      return;
-    }
-    const toLatNumber = parseCoordinate(toLat);
-    const toLngNumber = parseCoordinate(toLng);
-    if (toLatNumber !== null && toLngNumber !== null) {
-      if (toPlacemarkRef.current) {
-        mapRef.current.geoObjects.remove(toPlacemarkRef.current);
-      }
-      toPlacemarkRef.current = new window.ymaps.Placemark(
-        [toLatNumber, toLngNumber],
-        { balloonContent: "Точка B" },
-        { preset: "islands#redDotIcon" },
-      );
-      mapRef.current.geoObjects.add(toPlacemarkRef.current);
-    }
-  }, [toLat, toLng]);
-
-  useEffect(() => {
-    if (!mapRef.current || !window.ymaps) {
-      return;
-    }
-    if (driverPlacemarkRef.current) {
-      mapRef.current.geoObjects.remove(driverPlacemarkRef.current);
-      driverPlacemarkRef.current = null;
-    }
-    if (!driverLiveLocation) {
-      return;
-    }
-    driverPlacemarkRef.current = new window.ymaps.Placemark(
-      [driverLiveLocation.lat, driverLiveLocation.lng],
-      { balloonContent: "Водитель online" },
-      { preset: "islands#blueDotIcon" },
-    );
-    mapRef.current.geoObjects.add(driverPlacemarkRef.current);
-  }, [driverLiveLocation]);
-
-  useEffect(() => {
     if (
-      !mapRef.current ||
       !driverLiveLocation ||
       !followDriverOnMap ||
       !activeOrderId
     ) {
       return;
     }
-    mapRef.current.setCenter([driverLiveLocation.lat, driverLiveLocation.lng], 13);
+    setMapCenter(driverLiveLocation);
   }, [activeOrderId, driverLiveLocation, followDriverOnMap]);
+
+  const mapMarkers = useMemo<MapMarker[]>(() => {
+    const markers: MapMarker[] = [];
+    const fromLatNumber = parseCoordinate(fromLat);
+    const fromLngNumber = parseCoordinate(fromLng);
+    const toLatNumber = parseCoordinate(toLat);
+    const toLngNumber = parseCoordinate(toLng);
+    if (fromLatNumber !== null && fromLngNumber !== null) {
+      markers.push({
+        id: "from",
+        lat: fromLatNumber,
+        lng: fromLngNumber,
+        title: "Точка A",
+        icon: "pickup",
+      });
+    }
+    if (toLatNumber !== null && toLngNumber !== null) {
+      markers.push({
+        id: "to",
+        lat: toLatNumber,
+        lng: toLngNumber,
+        title: "Точка B",
+        icon: "dropoff",
+      });
+    }
+    if (driverLiveLocation) {
+      markers.push({
+        id: "driver",
+        lat: driverLiveLocation.lat,
+        lng: driverLiveLocation.lng,
+        title: "Водитель",
+        icon: "driver",
+      });
+    }
+    return markers;
+  }, [driverLiveLocation, fromLat, fromLng, toLat, toLng]);
+
+  const mapRoutes = useMemo<MapRoute[]>(() => {
+    if (!parsedCoordinates.valid) {
+      return [];
+    }
+    return [
+      {
+        points: [
+          { lat: parsedCoordinates.fromLat, lng: parsedCoordinates.fromLng },
+          { lat: parsedCoordinates.toLat, lng: parsedCoordinates.toLng },
+        ],
+        color: "#3B82F6",
+        strokeWidth: 4,
+      },
+    ];
+  }, [parsedCoordinates]);
+
+  const handleMapClick = useCallback(
+    async (lat: number, lng: number) => {
+      if (mapPickMode === "from") {
+        setFromLat(lat.toFixed(6));
+        setFromLng(lng.toFixed(6));
+      } else {
+        setToLat(lat.toFixed(6));
+        setToLng(lng.toFixed(6));
+      }
+
+      try {
+        const reverse = await reverseGeoMutation.mutateAsync({ lat, lng });
+        if (reverse.status < 300 && reverse.body?.normalizedAddress) {
+          if (mapPickMode === "from") {
+            setFromAddress(reverse.body.normalizedAddress);
+          } else {
+            setToAddress(reverse.body.normalizedAddress);
+          }
+          setMapError(
+            reverse.body.fallbackUsed
+              ? "Geo fallback активирован: отображены приближенные данные."
+              : null,
+          );
+        }
+      } catch {
+        setMapError("Не удалось получить адрес точки. Координаты обновлены вручную.");
+      }
+    },
+    [mapPickMode, reverseGeoMutation],
+  );
 
   if (!user || !roleMatches(user.role, "PASSENGER")) {
     return null;
@@ -629,8 +557,16 @@ const PassengerDashboard = () => {
                         Рассчитать маршрут
                       </Button>
                     </div>
-                    <div
-                      ref={mapContainerRef}
+                    <YandexMap
+                      center={mapCenter}
+                      zoom={12}
+                      markers={mapMarkers}
+                      routes={mapRoutes}
+                      onMapClick={(lat, lng) => void handleMapClick(lat, lng)}
+                      onCameraMove={() => {
+                        if (!mapReady) setMapReady(true);
+                      }}
+                      myLocationEnabled={false}
                       className="h-64 w-full rounded-md border border-border/50"
                     />
                     <p className="mt-2 text-xs text-muted-foreground">

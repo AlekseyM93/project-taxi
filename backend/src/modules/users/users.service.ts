@@ -10,8 +10,19 @@ export class UsersService {
     @InjectRepository(UserEntity) private readonly repo: Repository<UserEntity>,
   ) {}
 
+  /**
+   * Совпадает с логикой `scripts/create-test-users.js`: пользователь находится по цифрам номера,
+   * формат ввода (+7, скобки, пробелы) не важен.
+   */
   findByPhone(phone: string) {
-    return this.repo.findOne({ where: { phone } });
+    const digits = phone.replace(/\D/g, '');
+    if (!digits) {
+      return Promise.resolve(null);
+    }
+    return this.repo
+      .createQueryBuilder('u')
+      .where(`regexp_replace(u.phone, '[^0-9]', '', 'g') = :digits`, { digits })
+      .getOne();
   }
 
   async createUser(phone: string, password: string, role: UserRole) {

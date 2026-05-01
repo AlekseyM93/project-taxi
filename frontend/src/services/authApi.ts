@@ -9,6 +9,10 @@ export type LoginResponse = {
 
 export type RegisterResponse = {
   id: string;
+  /** Optional JWT pair returned after signup (same shape as login) for mobile clients. */
+  role?: string;
+  accessToken?: string;
+  refreshToken?: string;
 };
 
 export async function loginByPhonePassword(params: {

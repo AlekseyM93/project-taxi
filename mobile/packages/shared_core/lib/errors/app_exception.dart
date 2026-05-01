@@ -17,6 +17,18 @@ abstract class AppException implements Exception {
   String toString() => '$runtimeType: $message';
 }
 
+/// Сеть недоступна, но команда принята в локальную офлайн-очередь синхронизации.
+class QueuedForSyncException extends AppException {
+  const QueuedForSyncException({super.message = 'Queued for sync'});
+
+  @override
+  bool get isRetryable => false;
+
+  @override
+  String get userFriendlyMessage =>
+      'Нет сети. Действие сохранено и отправится при восстановлении связи.';
+}
+
 class NetworkException extends AppException {
   const NetworkException({
     required super.message,
@@ -52,9 +64,13 @@ class AuthException extends AppException {
     super.originalError,
     super.stackTrace,
     this.isSessionExpired = false,
+    this.userFacingOverride,
   });
 
   final bool isSessionExpired;
+
+  /// Полный текст для UI (например «Неверный телефон или пароль»), без префикса «Ошибка авторизации».
+  final String? userFacingOverride;
 
   @override
   bool get isRetryable => false;
@@ -63,6 +79,9 @@ class AuthException extends AppException {
   String get userFriendlyMessage {
     if (isSessionExpired) {
       return 'Сессия истекла. Войдите заново.';
+    }
+    if (userFacingOverride != null && userFacingOverride!.isNotEmpty) {
+      return userFacingOverride!;
     }
     return 'Ошибка авторизации: $message';
   }

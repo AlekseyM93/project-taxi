@@ -22,7 +22,9 @@ dependencies:
   equatable: ^2.0.7
   flutter_bloc: ^8.1.6
   get_it: ^8.0.3
-  yandex_maps_mapkit_lite: ^4.30.0-beta
+  dgis_mobile_sdk_map: ^13.4.0
+  flutter_map: ^8.3.0
+  latlong2: ^0.9.1
 
 dev_dependencies:
   flutter_test:

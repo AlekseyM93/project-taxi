@@ -411,6 +411,9 @@ export class DriversService {
       order: { startedAt: 'DESC' },
     });
     return {
+      isOnline: Boolean(openShift),
+      startedAt: openShift?.startedAt?.toISOString() ?? null,
+      vehicleId: null,
       activeShift: openShift
         ? {
             shiftId: openShift.id,

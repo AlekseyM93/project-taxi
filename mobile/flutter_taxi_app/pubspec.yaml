@@ -24,3 +24,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    # Подключение в https://dev.2gis.ru — замените файл на свой бинарный dgissdk.key
+    # (не коммитьте ключ в публичный репозиторий).
+    - assets/dgissdk.key

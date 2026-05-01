@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GeoGeocodeDto, GeoReverseDto, GeoRouteEstimateDto, GeoSuggestDto } from '../dto';
 import { MapProviderAdapter } from '../geo-provider';
+import { OsrmDrivingRouteService } from '../osrm-driving-route.service';
 import {
   GeoGeocodeResponse,
   GeoReverseResponse,
@@ -13,7 +14,10 @@ import {
 export class InternalGeoProvider implements MapProviderAdapter {
   readonly providerCode = 'INTERNAL' as const;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly osrmDrivingRoute: OsrmDrivingRouteService,
+  ) {}
 
   async suggest(dto: GeoSuggestDto): Promise<GeoSuggestResponse> {
     const centerLat = this.getNumberConfig('GEO_DEFAULT_CENTER_LAT', 55.751244, -90, 90);
@@ -35,17 +39,87 @@ export class InternalGeoProvider implements MapProviderAdapter {
   }
 
   async geocode(dto: GeoGeocodeDto): Promise<GeoGeocodeResponse> {
-    const parsed = this.tryParseCoordinates(dto.addressText);
-    const point = parsed ?? {
+    const trimmed = dto.addressText.trim();
+    const fallbackPoint = {
       lat: this.getNumberConfig('GEO_DEFAULT_CENTER_LAT', 55.751244, -90, 90),
       lng: this.getNumberConfig('GEO_DEFAULT_CENTER_LNG', 37.618423, -180, 180),
     };
+
+    const parsed = this.tryParseCoordinates(trimmed);
+    if (parsed) {
+      return {
+        provider: this.providerCode,
+        point: parsed,
+        normalizedAddress: trimmed,
+        confidence: 'HIGH',
+      };
+    }
+
+    const nom = await this.tryNominatimForward(trimmed);
+    if (nom) {
+      return {
+        provider: this.providerCode,
+        point: { lat: nom.lat, lng: nom.lng },
+        normalizedAddress: nom.displayName,
+        confidence: 'MEDIUM',
+      };
+    }
+
     return {
       provider: this.providerCode,
-      point,
-      normalizedAddress: dto.addressText.trim(),
-      confidence: parsed ? 'HIGH' : 'LOW',
+      point: fallbackPoint,
+      normalizedAddress: trimmed,
+      confidence: 'LOW',
     };
+  }
+
+  /** Поиск по тексту без API-ключа Яндекса (политика https://operations.osmfoundation.org/policies/nominatim/). */
+  private async tryNominatimForward(query: string): Promise<{
+    lat: number;
+    lng: number;
+    displayName: string;
+  } | null> {
+    if (
+      this.configService.get<string>('GEO_NOMINATIM_ENABLED', 'true') !== 'true'
+    ) {
+      return null;
+    }
+    const base = this.configService
+      .get<string>('GEO_NOMINATIM_BASE_URL', 'https://nominatim.openstreetmap.org')
+      .trim()
+      .replace(/\/+$/, '');
+    const ua = this.configService.get<string>(
+      'GEO_NOMINATIM_USER_AGENT',
+      'taxi-platform-backend/1.0 (geo search)',
+    );
+    const url = `${base}/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5000);
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': ua,
+        },
+      });
+      if (!res.ok) return null;
+      const data = (await res.json()) as unknown;
+      if (!Array.isArray(data) || data.length === 0) return null;
+      const first = data[0] as { lat?: string; lon?: string; display_name?: string };
+      const lat = Number.parseFloat(String(first.lat ?? ''));
+      const lng = Number.parseFloat(String(first.lon ?? ''));
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+      const dn =
+        typeof first.display_name === 'string' && first.display_name.length > 0
+          ? first.display_name
+          : query;
+      return { lat, lng, displayName: dn };
+    } catch {
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async reverse(dto: GeoReverseDto): Promise<GeoReverseResponse> {
@@ -62,6 +136,15 @@ export class InternalGeoProvider implements MapProviderAdapter {
   }
 
   async routeEstimate(dto: GeoRouteEstimateDto): Promise<GeoRouteEstimateResponse> {
+    const road = await this.osrmDrivingRoute.tryDrivingRoute(dto);
+    if (road) {
+      return {
+        provider: this.providerCode,
+        distanceKm: road.distanceKm,
+        estimatedDurationMin: road.estimatedDurationMin,
+        polyline: road.polyline,
+      };
+    }
     return this.routeEstimateSync(dto);
   }
 

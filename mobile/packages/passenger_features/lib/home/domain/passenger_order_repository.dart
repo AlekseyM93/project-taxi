@@ -13,11 +13,26 @@ class RouteEstimate {
     required this.estimatedDurationMin,
     this.provider,
     this.fallbackUsed = false,
+    this.polyline,
   });
   final double distanceKm;
   final double estimatedDurationMin;
   final String? provider;
   final bool fallbackUsed;
+
+  /// Геометрия дороги (например OSRM через backend).
+  final List<MapLatLng>? polyline;
+}
+
+class GeocodeAddressResult {
+  const GeocodeAddressResult({
+    required this.latitude,
+    required this.longitude,
+    required this.normalizedAddress,
+  });
+  final double latitude;
+  final double longitude;
+  final String normalizedAddress;
 }
 
 class FareEstimate {
@@ -66,6 +81,34 @@ class OrderDetails {
   final String? dropoffAddress;
   final double? price;
   final String? createdAt;
+
+  OrderDetails copyWith({
+    String? status,
+    String? driverId,
+    String? driverName,
+    double? pickupLat,
+    double? pickupLng,
+    double? dropoffLat,
+    double? dropoffLng,
+  }) {
+    return OrderDetails(
+      id: id,
+      status: status ?? this.status,
+      driverId: driverId ?? this.driverId,
+      driverName: driverName ?? this.driverName,
+      driverPhone: driverPhone,
+      vehicleModel: vehicleModel,
+      vehiclePlate: vehiclePlate,
+      pickupLat: pickupLat ?? this.pickupLat,
+      pickupLng: pickupLng ?? this.pickupLng,
+      dropoffLat: dropoffLat ?? this.dropoffLat,
+      dropoffLng: dropoffLng ?? this.dropoffLng,
+      pickupAddress: pickupAddress,
+      dropoffAddress: dropoffAddress,
+      price: price,
+      createdAt: createdAt,
+    );
+  }
 }
 
 abstract class PassengerOrderRepository {
@@ -77,6 +120,8 @@ abstract class PassengerOrderRepository {
   });
 
   Future<String> reverseGeocode({required double lat, required double lng});
+
+  Future<GeocodeAddressResult> geocodeAddress(String addressText, {String? cityCode});
 
   Future<FareEstimate> estimateFare({
     required double fromLat,
